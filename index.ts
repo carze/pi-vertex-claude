@@ -369,6 +369,40 @@ export function parseStreamingJson(partialJson: string): Record<string, any> {
 	}
 }
 
+export type ThinkingConfig =
+	| { type: "adaptive" }
+	| { type: "enabled"; budget_tokens: number };
+
+export function buildThinkingConfig(
+	modelId: string,
+	reasoning: string,
+	maxTokens: number,
+	thinkingBudgets?: Record<string, number>,
+): { thinking: ThinkingConfig; maxTokens: number } {
+	if (modelId.startsWith("claude-opus-4-7")) {
+		return { thinking: { type: "adaptive" }, maxTokens };
+	}
+
+	const defaultBudgets: Record<string, number> = {
+		minimal: 1024,
+		low: 4096,
+		medium: 10240,
+		high: 20480,
+		xhigh: 32768,
+	};
+	const budgetKey = reasoning === "xhigh" ? "high" : reasoning;
+	const customBudget = thinkingBudgets?.[budgetKey];
+	const thinkingBudget = customBudget ?? defaultBudgets[reasoning] ?? 10240;
+
+	const minOutputTokens = 1024;
+	const adjustedMaxTokens = maxTokens <= thinkingBudget ? thinkingBudget + minOutputTokens : maxTokens;
+
+	return {
+		thinking: { type: "enabled", budget_tokens: thinkingBudget },
+		maxTokens: adjustedMaxTokens,
+	};
+}
+
 // =============================================================================
 // Streaming Implementation
 // =============================================================================
@@ -461,34 +495,9 @@ export function streamVertexClaude(
 
 			// Handle thinking/reasoning
 			if (options?.reasoning && model.reasoning) {
-				const isAdaptiveOnly = model.id.startsWith("claude-opus-4-7");
-
-				if (isAdaptiveOnly) {
-					// Opus 4.7 uses adaptive thinking — sending type: "enabled" returns a 400
-					(params as any).thinking = { type: "adaptive" };
-				} else {
-					const defaultBudgets: Record<string, number> = {
-						minimal: 1024,
-						low: 4096,
-						medium: 10240,
-						high: 20480,
-						xhigh: 32768,
-					};
-					const budgetKey = options.reasoning === "xhigh" ? "high" : options.reasoning;
-					const customBudget = options.thinkingBudgets?.[budgetKey as keyof typeof options.thinkingBudgets];
-					const thinkingBudget = customBudget ?? defaultBudgets[options.reasoning] ?? 10240;
-
-					// Ensure max_tokens > thinking budget
-					const minOutputTokens = 1024;
-					if (params.max_tokens <= thinkingBudget) {
-						params.max_tokens = thinkingBudget + minOutputTokens;
-					}
-
-					params.thinking = {
-						type: "enabled",
-						budget_tokens: thinkingBudget,
-					};
-				}
+				const result = buildThinkingConfig(model.id, options.reasoning, params.max_tokens, options.thinkingBudgets);
+				(params as any).thinking = result.thinking;
+				params.max_tokens = result.maxTokens;
 			}
 
 			// Start streaming

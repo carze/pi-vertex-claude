@@ -18,12 +18,14 @@ vi.mock(
 let convertMessages: typeof import("../index.js").convertMessages;
 let mapStopReason: typeof import("../index.js").mapStopReason;
 let parseStreamingJson: typeof import("../index.js").parseStreamingJson;
+let buildThinkingConfig: typeof import("../index.js").buildThinkingConfig;
 
 beforeAll(async () => {
 	const helpers = await import("../index.js");
 	convertMessages = helpers.convertMessages;
 	mapStopReason = helpers.mapStopReason;
 	parseStreamingJson = helpers.parseStreamingJson;
+	buildThinkingConfig = helpers.buildThinkingConfig;
 });
 
 describe("vertex-claude helpers", () => {
@@ -71,6 +73,39 @@ describe("vertex-claude helpers", () => {
 
 		expect(lastBlock.type).toBe("tool_result");
 		expect(lastBlock.cache_control).toEqual({ type: "ephemeral" });
+	});
+
+	it("returns adaptive thinking for Opus 4.7", () => {
+		const result = buildThinkingConfig("claude-opus-4-7", "high", 16000);
+		expect(result.thinking).toEqual({ type: "adaptive" });
+		expect(result.maxTokens).toBe(16000);
+	});
+
+	it("returns extended thinking with budget for non-Opus-4.7 models", () => {
+		const result = buildThinkingConfig("claude-opus-4-6", "high", 32000);
+		expect(result.thinking).toEqual({ type: "enabled", budget_tokens: 20480 });
+		expect(result.maxTokens).toBe(32000);
+	});
+
+	it("returns extended thinking for Sonnet 4.6", () => {
+		const result = buildThinkingConfig("claude-sonnet-4-6", "medium", 64000);
+		expect(result.thinking).toEqual({ type: "enabled", budget_tokens: 10240 });
+	});
+
+	it("adjusts maxTokens when budget exceeds it", () => {
+		const result = buildThinkingConfig("claude-opus-4-6", "high", 1000);
+		expect(result.thinking).toEqual({ type: "enabled", budget_tokens: 20480 });
+		expect(result.maxTokens).toBe(20480 + 1024);
+	});
+
+	it("does not adjust maxTokens for adaptive thinking", () => {
+		const result = buildThinkingConfig("claude-opus-4-7", "high", 1000);
+		expect(result.maxTokens).toBe(1000);
+	});
+
+	it("uses custom thinking budgets when provided", () => {
+		const result = buildThinkingConfig("claude-opus-4-6", "medium", 32000, { medium: 8000 });
+		expect(result.thinking).toEqual({ type: "enabled", budget_tokens: 8000 });
 	});
 
 	it("adds cache_control to last text block in user content arrays", () => {
