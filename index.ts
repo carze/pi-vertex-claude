@@ -461,27 +461,34 @@ export function streamVertexClaude(
 
 			// Handle thinking/reasoning
 			if (options?.reasoning && model.reasoning) {
-				const defaultBudgets: Record<string, number> = {
-					minimal: 1024,
-					low: 4096,
-					medium: 10240,
-					high: 20480,
-					xhigh: 32768,
-				};
-				const budgetKey = options.reasoning === "xhigh" ? "high" : options.reasoning;
-				const customBudget = options.thinkingBudgets?.[budgetKey as keyof typeof options.thinkingBudgets];
-				const thinkingBudget = customBudget ?? defaultBudgets[options.reasoning] ?? 10240;
+				const isAdaptiveOnly = model.id.startsWith("claude-opus-4-7");
 
-				// Ensure max_tokens > thinking budget
-				const minOutputTokens = 1024;
-				if (params.max_tokens <= thinkingBudget) {
-					params.max_tokens = thinkingBudget + minOutputTokens;
+				if (isAdaptiveOnly) {
+					// Opus 4.7 uses adaptive thinking — sending type: "enabled" returns a 400
+					(params as any).thinking = { type: "adaptive" };
+				} else {
+					const defaultBudgets: Record<string, number> = {
+						minimal: 1024,
+						low: 4096,
+						medium: 10240,
+						high: 20480,
+						xhigh: 32768,
+					};
+					const budgetKey = options.reasoning === "xhigh" ? "high" : options.reasoning;
+					const customBudget = options.thinkingBudgets?.[budgetKey as keyof typeof options.thinkingBudgets];
+					const thinkingBudget = customBudget ?? defaultBudgets[options.reasoning] ?? 10240;
+
+					// Ensure max_tokens > thinking budget
+					const minOutputTokens = 1024;
+					if (params.max_tokens <= thinkingBudget) {
+						params.max_tokens = thinkingBudget + minOutputTokens;
+					}
+
+					params.thinking = {
+						type: "enabled",
+						budget_tokens: thinkingBudget,
+					};
 				}
-
-				params.thinking = {
-					type: "enabled",
-					budget_tokens: thinkingBudget,
-				};
 			}
 
 			// Start streaming
