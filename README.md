@@ -43,6 +43,9 @@ piv() {
 
 | Model | Context | Output |
 |-------|---------|--------|
+| `claude-opus-4-7` | 1M | 128K |
+| `claude-opus-4-6` | 1M | 128K |
+| `claude-sonnet-4-6` | 1M | 64K |
 | `claude-opus-4-5@20251101` | 200K | 32K |
 | `claude-opus-4-1@20250805` | 200K | 32K |
 | `claude-opus-4@20250514` | 200K | 32K |
