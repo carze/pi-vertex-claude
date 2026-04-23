@@ -1,0 +1,26 @@
+index.ts
+  f066a0ec0ec7cea5 209-261,292
+test/vertex-claude.test.ts
+  f066a0ec0ec7cea5 28,42,269-394
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "4255e146701261e05b470ca21876bb6857cd673a",
+  "prompts": {
+    "f066a0ec0ec7cea5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26a23531-a218-4be0-b53a-3d977d798b1e",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Cesar Arze",
+      "messages": [],
+      "total_additions": 182,
+      "total_deletions": 0,
+      "accepted_lines": 182,
+      "overriden_lines": 0,
+      "messages_url": "https://usegitai.com/cas/da183ddfc421f2a85a51c215ba43476e0aa1328366c1ee9e575b3582b090a715"
+    }
+  }
+}
