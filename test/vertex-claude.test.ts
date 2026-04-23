@@ -16,6 +16,7 @@ vi.mock(
 );
 
 let convertMessages: typeof import("../index.js").convertMessages;
+let convertTools: typeof import("../index.js").convertTools;
 let mapStopReason: typeof import("../index.js").mapStopReason;
 let parseStreamingJson: typeof import("../index.js").parseStreamingJson;
 let buildThinkingConfig: typeof import("../index.js").buildThinkingConfig;
@@ -27,6 +28,7 @@ let iterateAnthropicEvents: typeof import("../index.js").iterateAnthropicEvents;
 beforeAll(async () => {
 	const helpers = await import("../index.js");
 	convertMessages = helpers.convertMessages;
+	convertTools = helpers.convertTools;
 	mapStopReason = helpers.mapStopReason;
 	parseStreamingJson = helpers.parseStreamingJson;
 	buildThinkingConfig = helpers.buildThinkingConfig;
@@ -145,6 +147,43 @@ describe("vertex-claude helpers", () => {
 
 		expect(lastBlock.type).toBe("image");
 		expect(lastBlock.cache_control).toEqual({ type: "ephemeral" });
+	});
+});
+
+describe("convertTools", () => {
+	const tool = {
+		name: "read_file",
+		description: "Read a file",
+		parameters: {
+			type: "object",
+			properties: { path: { type: "string" } },
+			required: ["path"],
+		},
+	};
+
+	it("sets eager_input_streaming: true on every tool", () => {
+		const result = convertTools([tool as any, { ...tool, name: "write_file" } as any]);
+		expect(result).toHaveLength(2);
+		expect(result[0].eager_input_streaming).toBe(true);
+		expect(result[1].eager_input_streaming).toBe(true);
+	});
+
+	it("preserves name, description, and input_schema", () => {
+		const [converted] = convertTools([tool as any]);
+		expect(converted.name).toBe("read_file");
+		expect(converted.description).toBe("Read a file");
+		expect(converted.input_schema).toEqual({
+			type: "object",
+			properties: { path: { type: "string" } },
+			required: ["path"],
+		});
+	});
+
+	it("defaults missing properties and required to empty collections", () => {
+		const bare = { name: "noop", description: "", parameters: { type: "object" } };
+		const [converted] = convertTools([bare as any]);
+		expect(converted.input_schema.properties).toEqual({});
+		expect(converted.input_schema.required).toEqual([]);
 	});
 });
 

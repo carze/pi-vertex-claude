@@ -327,10 +327,11 @@ export function convertMessages(messages: Message[], model: Model<Api>): any[] {
 	return params;
 }
 
-function convertTools(tools: Tool[]): any[] {
+export function convertTools(tools: Tool[]): any[] {
 	return tools.map((tool) => ({
 		name: tool.name,
 		description: tool.description,
+		eager_input_streaming: true,
 		input_schema: {
 			type: "object",
 			properties: (tool.parameters as any).properties || {},
@@ -692,16 +693,16 @@ export function streamVertexClaude(
 				);
 			}
 
-			// Configure beta features for thinking and fine-grained streaming
-			const betaFeatures = ["fine-grained-tool-streaming-2025-05-14", "interleaved-thinking-2025-05-14"];
+			// fine-grained-tool-streaming-2025-05-14 was deprecated; replaced by
+			// per-tool eager_input_streaming in convertTools. Guard the header
+			// against an empty join, which Anthropic rejects with a 400.
+			const betaFeatures = ["interleaved-thinking-2025-05-14"];
 
 			// Create AnthropicVertex client - uses Google ADC automatically
 			const client = new AnthropicVertex({
 				projectId: projectInfo.id,
 				region: region,
-				defaultHeaders: {
-					"anthropic-beta": betaFeatures.join(","),
-				},
+				defaultHeaders: betaFeatures.length > 0 ? { "anthropic-beta": betaFeatures.join(",") } : {},
 			});
 
 			// Build request params
