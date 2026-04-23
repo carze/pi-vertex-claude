@@ -25,6 +25,7 @@ let parseJsonWithRepair: typeof import("../index.js").parseJsonWithRepair;
 let iterateSseMessages: typeof import("../index.js").iterateSseMessages;
 let iterateAnthropicEvents: typeof import("../index.js").iterateAnthropicEvents;
 let normalizeToolCallId: typeof import("../index.js").normalizeToolCallId;
+let synthesizeMissingToolResults: typeof import("../index.js").synthesizeMissingToolResults;
 
 beforeAll(async () => {
 	const helpers = await import("../index.js");
@@ -38,6 +39,7 @@ beforeAll(async () => {
 	iterateSseMessages = helpers.iterateSseMessages;
 	iterateAnthropicEvents = helpers.iterateAnthropicEvents;
 	normalizeToolCallId = helpers.normalizeToolCallId;
+	synthesizeMissingToolResults = helpers.synthesizeMissingToolResults;
 });
 
 describe("vertex-claude helpers", () => {
@@ -261,6 +263,132 @@ describe("convertMessages tool id normalization", () => {
 		expect(assistant.content[0].id).toBe("call_abc_xyz");
 		expect(userWithResults.content[0].tool_use_id).toBe("call_abc_xyz");
 		expect(userWithResults.content[1].tool_use_id).toBe("call_second_one");
+	});
+});
+
+describe("synthesizeMissingToolResults", () => {
+	it("leaves fully resolved transcripts untouched", () => {
+		const messages = [
+			{ role: "user", content: "hi", timestamp: 0 },
+			{
+				role: "assistant",
+				content: [{ type: "toolCall", id: "t1", name: "read", arguments: {} }],
+			},
+			{
+				role: "toolResult",
+				toolCallId: "t1",
+				toolName: "read",
+				content: [{ type: "text", text: "ok" }],
+				isError: false,
+				timestamp: 0,
+			},
+		];
+		const result = synthesizeMissingToolResults(messages as any);
+		expect(result).toHaveLength(3);
+	});
+
+	it("synthesizes a trailing tool_result for an unresolved tool_use at the end", () => {
+		const messages = [
+			{ role: "user", content: "read the file", timestamp: 0 },
+			{
+				role: "assistant",
+				content: [{ type: "toolCall", id: "call_orphan", name: "read", arguments: {} }],
+			},
+		];
+		const result = synthesizeMissingToolResults(messages as any);
+		expect(result).toHaveLength(3);
+		const last = result[result.length - 1] as any;
+		expect(last.role).toBe("toolResult");
+		expect(last.toolCallId).toBe("call_orphan");
+		expect(last.toolName).toBe("read");
+		expect(last.isError).toBe(true);
+		expect(last.content).toEqual([{ type: "text", text: "No result provided" }]);
+	});
+
+	it("synthesizes only for tool calls still missing a result, not ones already resolved", () => {
+		const messages = [
+			{
+				role: "assistant",
+				content: [
+					{ type: "toolCall", id: "t1", name: "read", arguments: {} },
+					{ type: "toolCall", id: "t2", name: "bash", arguments: {} },
+				],
+			},
+			{
+				role: "toolResult",
+				toolCallId: "t1",
+				toolName: "read",
+				content: [{ type: "text", text: "ok" }],
+				isError: false,
+				timestamp: 0,
+			},
+		];
+		const result = synthesizeMissingToolResults(messages as any);
+		const synthesized = result.filter((m: any) => m.role === "toolResult" && m.isError);
+		expect(synthesized).toHaveLength(1);
+		expect((synthesized[0] as any).toolCallId).toBe("t2");
+		expect((synthesized[0] as any).toolName).toBe("bash");
+	});
+
+	it("flushes orphans before a user message interrupts the tool flow", () => {
+		const messages = [
+			{
+				role: "assistant",
+				content: [{ type: "toolCall", id: "orphan", name: "read", arguments: {} }],
+			},
+			{ role: "user", content: "never mind", timestamp: 0 },
+		];
+		const result = synthesizeMissingToolResults(messages as any);
+		expect(result).toHaveLength(3);
+		expect(result[0].role).toBe("assistant");
+		expect(result[1].role).toBe("toolResult");
+		expect((result[1] as any).toolCallId).toBe("orphan");
+		expect(result[2].role).toBe("user");
+	});
+
+	it("flushes orphans before a subsequent assistant message", () => {
+		const messages = [
+			{
+				role: "assistant",
+				content: [{ type: "toolCall", id: "first_orphan", name: "read", arguments: {} }],
+			},
+			{ role: "assistant", content: [{ type: "text", text: "retrying" }] },
+		];
+		const result = synthesizeMissingToolResults(messages as any);
+		expect(result).toHaveLength(3);
+		expect(result[1].role).toBe("toolResult");
+		expect((result[1] as any).toolCallId).toBe("first_orphan");
+		expect(result[2].role).toBe("assistant");
+	});
+});
+
+describe("convertMessages orphan tool results", () => {
+	const model = {
+		id: "test-model",
+		name: "Test Model",
+		api: "vertex-claude-api",
+		provider: "google-vertex-claude",
+		reasoning: false,
+		input: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1000,
+		maxTokens: 100,
+	} as const;
+
+	it("emits a synthetic tool_result so the Anthropic payload is well-formed", () => {
+		const messages = [
+			{ role: "user", content: "hi", timestamp: 0 },
+			{
+				role: "assistant",
+				content: [{ type: "toolCall", id: "call:orphan", name: "read", arguments: {} }],
+			},
+		];
+		const params = convertMessages(messages as any, model as any);
+		const last = params[params.length - 1];
+		expect(last.role).toBe("user");
+		expect(last.content[0].type).toBe("tool_result");
+		expect(last.content[0].tool_use_id).toBe("call_orphan");
+		expect(last.content[0].is_error).toBe(true);
 	});
 });
 

@@ -206,6 +206,59 @@ export function normalizeToolCallId(id: string): string {
 	return sanitized.length > 64 ? sanitized.slice(0, 64) : sanitized;
 }
 
+// Aborted sessions can leave a trailing assistant turn with unresolved
+// tool_use blocks. Anthropic rejects that shape on replay ("each tool_use
+// must be followed by a tool_result"). Walk the transcript once and insert
+// synthetic "No result provided" tool_result messages for any orphaned
+// tool calls — either before the next user/assistant turn or at the tail.
+// Ported from pi-mono a23fab46.
+export function synthesizeMissingToolResults(messages: Message[]): Message[] {
+	const result: Message[] = [];
+	let pendingToolCalls: Array<{ id: string; name: string }> = [];
+	let resolvedIds = new Set<string>();
+
+	const flushSynthetic = () => {
+		if (pendingToolCalls.length === 0) return;
+		for (const tc of pendingToolCalls) {
+			if (!resolvedIds.has(tc.id)) {
+				result.push({
+					role: "toolResult",
+					toolCallId: tc.id,
+					toolName: tc.name,
+					content: [{ type: "text", text: "No result provided" }],
+					isError: true,
+					timestamp: Date.now(),
+				} as ToolResultMessage);
+			}
+		}
+		pendingToolCalls = [];
+		resolvedIds = new Set();
+	};
+
+	for (const msg of messages) {
+		if (msg.role === "assistant") {
+			flushSynthetic();
+			const toolCalls = msg.content.filter((b): b is ToolCall => b.type === "toolCall");
+			if (toolCalls.length > 0) {
+				pendingToolCalls = toolCalls.map((b) => ({ id: b.id, name: b.name }));
+				resolvedIds = new Set();
+			}
+			result.push(msg);
+		} else if (msg.role === "toolResult") {
+			resolvedIds.add(msg.toolCallId);
+			result.push(msg);
+		} else if (msg.role === "user") {
+			flushSynthetic();
+			result.push(msg);
+		} else {
+			result.push(msg);
+		}
+	}
+
+	flushSynthetic();
+	return result;
+}
+
 function convertContentBlocks(
 	content: (TextContent | ImageContent)[],
 ): string | Array<{ type: "text"; text: string } | { type: "image"; source: { type: "base64"; media_type: string; data: string } }> {
@@ -236,6 +289,7 @@ function convertContentBlocks(
 }
 
 export function convertMessages(messages: Message[], model: Model<Api>): any[] {
+	messages = synthesizeMissingToolResults(messages);
 	const params: any[] = [];
 
 	for (let i = 0; i < messages.length; i++) {
