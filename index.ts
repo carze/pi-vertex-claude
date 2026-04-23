@@ -672,18 +672,50 @@ export async function* iterateAnthropicEvents(
 	}
 }
 
+export type ThinkingDisplay = "summarized" | "omitted";
+
 export type ThinkingConfig =
-	| { type: "adaptive" }
-	| { type: "enabled"; budget_tokens: number };
+	| { type: "adaptive"; display: ThinkingDisplay }
+	| { type: "enabled"; budget_tokens: number; display: ThinkingDisplay };
+
+export type ThinkingEffort = "low" | "medium" | "high" | "xhigh";
+
+// Map pi-ai reasoning level to the Anthropic adaptive-thinking `effort` value.
+// Only Opus 4.7 supports "xhigh" on `output_config`; everything else caps at
+// "high". Older Opus 4.6 uses budget-based thinking in this provider, so its
+// "max" mapping lives in pi-mono but not here.
+export function mapReasoningToEffort(reasoning: string, modelId: string): ThinkingEffort {
+	switch (reasoning) {
+		case "minimal":
+		case "low":
+			return "low";
+		case "medium":
+			return "medium";
+		case "high":
+			return "high";
+		case "xhigh":
+			return modelId.includes("opus-4-7") ? "xhigh" : "high";
+		default:
+			return "high";
+	}
+}
 
 export function buildThinkingConfig(
 	modelId: string,
 	reasoning: string,
 	maxTokens: number,
 	thinkingBudgets?: Record<string, number>,
-): { thinking: ThinkingConfig; maxTokens: number } {
+): { thinking: ThinkingConfig; maxTokens: number; effort?: ThinkingEffort } {
+	// Opus 4.7 uses adaptive thinking. Anthropic silently changed its default
+	// `display` to "omitted", which strips thinking text from the stream and
+	// corrupts tool_use partial_json delivery (TodoWrite "JSON parse error").
+	// Pin display to "summarized" per pi-mono acbf8eca.
 	if (modelId.startsWith("claude-opus-4-7")) {
-		return { thinking: { type: "adaptive" }, maxTokens };
+		return {
+			thinking: { type: "adaptive", display: "summarized" },
+			maxTokens,
+			effort: mapReasoningToEffort(reasoning, modelId),
+		};
 	}
 
 	const defaultBudgets: Record<string, number> = {
@@ -701,7 +733,7 @@ export function buildThinkingConfig(
 	const adjustedMaxTokens = maxTokens <= thinkingBudget ? thinkingBudget + minOutputTokens : maxTokens;
 
 	return {
-		thinking: { type: "enabled", budget_tokens: thinkingBudget },
+		thinking: { type: "enabled", budget_tokens: thinkingBudget, display: "summarized" },
 		maxTokens: adjustedMaxTokens,
 	};
 }
@@ -801,6 +833,9 @@ export function streamVertexClaude(
 				const result = buildThinkingConfig(model.id, options.reasoning, params.max_tokens, options.thinkingBudgets);
 				(params as any).thinking = result.thinking;
 				params.max_tokens = result.maxTokens;
+				if (result.effort) {
+					(params as any).output_config = { effort: result.effort };
+				}
 			}
 
 			// Start streaming. Own the SSE loop so malformed tool JSON or raw control

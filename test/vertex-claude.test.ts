@@ -26,6 +26,7 @@ let iterateSseMessages: typeof import("../index.js").iterateSseMessages;
 let iterateAnthropicEvents: typeof import("../index.js").iterateAnthropicEvents;
 let normalizeToolCallId: typeof import("../index.js").normalizeToolCallId;
 let synthesizeMissingToolResults: typeof import("../index.js").synthesizeMissingToolResults;
+let mapReasoningToEffort: typeof import("../index.js").mapReasoningToEffort;
 
 beforeAll(async () => {
 	const helpers = await import("../index.js");
@@ -40,6 +41,7 @@ beforeAll(async () => {
 	iterateAnthropicEvents = helpers.iterateAnthropicEvents;
 	normalizeToolCallId = helpers.normalizeToolCallId;
 	synthesizeMissingToolResults = helpers.synthesizeMissingToolResults;
+	mapReasoningToEffort = helpers.mapReasoningToEffort;
 });
 
 describe("vertex-claude helpers", () => {
@@ -89,26 +91,50 @@ describe("vertex-claude helpers", () => {
 		expect(lastBlock.cache_control).toEqual({ type: "ephemeral" });
 	});
 
-	it("returns adaptive thinking for Opus 4.7", () => {
+	it("returns adaptive thinking with display=summarized and effort for Opus 4.7", () => {
 		const result = buildThinkingConfig("claude-opus-4-7", "high", 16000);
-		expect(result.thinking).toEqual({ type: "adaptive" });
+		expect(result.thinking).toEqual({ type: "adaptive", display: "summarized" });
+		expect(result.effort).toBe("high");
 		expect(result.maxTokens).toBe(16000);
 	});
 
-	it("returns extended thinking with budget for non-Opus-4.7 models", () => {
+	it("maps xhigh reasoning to effort=xhigh on Opus 4.7", () => {
+		const result = buildThinkingConfig("claude-opus-4-7", "xhigh", 16000);
+		expect(result.thinking).toEqual({ type: "adaptive", display: "summarized" });
+		expect(result.effort).toBe("xhigh");
+	});
+
+	it("maps xhigh reasoning to effort=high on non-4.7 models (defensive)", () => {
+		// Not currently reachable through this code path (only Opus 4.7 goes
+		// adaptive here) but guards mapReasoningToEffort contract.
+		expect(mapReasoningToEffort("xhigh", "claude-opus-4-6")).toBe("high");
+		expect(mapReasoningToEffort("xhigh", "claude-sonnet-4-6")).toBe("high");
+	});
+
+	it("maps reasoning levels to their expected effort values", () => {
+		expect(mapReasoningToEffort("minimal", "claude-opus-4-7")).toBe("low");
+		expect(mapReasoningToEffort("low", "claude-opus-4-7")).toBe("low");
+		expect(mapReasoningToEffort("medium", "claude-opus-4-7")).toBe("medium");
+		expect(mapReasoningToEffort("high", "claude-opus-4-7")).toBe("high");
+		expect(mapReasoningToEffort("xhigh", "claude-opus-4-7")).toBe("xhigh");
+		expect(mapReasoningToEffort("bogus", "claude-opus-4-7")).toBe("high");
+	});
+
+	it("returns extended thinking with budget and display=summarized for non-Opus-4.7 models", () => {
 		const result = buildThinkingConfig("claude-opus-4-6", "high", 32000);
-		expect(result.thinking).toEqual({ type: "enabled", budget_tokens: 20480 });
+		expect(result.thinking).toEqual({ type: "enabled", budget_tokens: 20480, display: "summarized" });
 		expect(result.maxTokens).toBe(32000);
+		expect(result.effort).toBeUndefined();
 	});
 
 	it("returns extended thinking for Sonnet 4.6", () => {
 		const result = buildThinkingConfig("claude-sonnet-4-6", "medium", 64000);
-		expect(result.thinking).toEqual({ type: "enabled", budget_tokens: 10240 });
+		expect(result.thinking).toEqual({ type: "enabled", budget_tokens: 10240, display: "summarized" });
 	});
 
 	it("adjusts maxTokens when budget exceeds it", () => {
 		const result = buildThinkingConfig("claude-opus-4-6", "high", 1000);
-		expect(result.thinking).toEqual({ type: "enabled", budget_tokens: 20480 });
+		expect(result.thinking).toEqual({ type: "enabled", budget_tokens: 20480, display: "summarized" });
 		expect(result.maxTokens).toBe(20480 + 1024);
 	});
 
@@ -119,7 +145,7 @@ describe("vertex-claude helpers", () => {
 
 	it("uses custom thinking budgets when provided", () => {
 		const result = buildThinkingConfig("claude-opus-4-6", "medium", 32000, { medium: 8000 });
-		expect(result.thinking).toEqual({ type: "enabled", budget_tokens: 8000 });
+		expect(result.thinking).toEqual({ type: "enabled", budget_tokens: 8000, display: "summarized" });
 	});
 
 	it("adds cache_control to last text block in user content arrays", () => {
