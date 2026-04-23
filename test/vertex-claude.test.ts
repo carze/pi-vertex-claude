@@ -24,6 +24,7 @@ let repairJson: typeof import("../index.js").repairJson;
 let parseJsonWithRepair: typeof import("../index.js").parseJsonWithRepair;
 let iterateSseMessages: typeof import("../index.js").iterateSseMessages;
 let iterateAnthropicEvents: typeof import("../index.js").iterateAnthropicEvents;
+let normalizeToolCallId: typeof import("../index.js").normalizeToolCallId;
 
 beforeAll(async () => {
 	const helpers = await import("../index.js");
@@ -36,6 +37,7 @@ beforeAll(async () => {
 	parseJsonWithRepair = helpers.parseJsonWithRepair;
 	iterateSseMessages = helpers.iterateSseMessages;
 	iterateAnthropicEvents = helpers.iterateAnthropicEvents;
+	normalizeToolCallId = helpers.normalizeToolCallId;
 });
 
 describe("vertex-claude helpers", () => {
@@ -184,6 +186,81 @@ describe("convertTools", () => {
 		const [converted] = convertTools([bare as any]);
 		expect(converted.input_schema.properties).toEqual({});
 		expect(converted.input_schema.required).toEqual([]);
+	});
+});
+
+describe("normalizeToolCallId", () => {
+	it("leaves already-conforming ids untouched", () => {
+		expect(normalizeToolCallId("toolu_01ABCdef-_")).toBe("toolu_01ABCdef-_");
+	});
+
+	it("replaces disallowed characters with underscore", () => {
+		expect(normalizeToolCallId("call:id.with|pipes")).toBe("call_id_with_pipes");
+	});
+
+	it("truncates ids longer than 64 characters", () => {
+		const long = "a".repeat(100);
+		const result = normalizeToolCallId(long);
+		expect(result).toHaveLength(64);
+		expect(result).toBe("a".repeat(64));
+	});
+
+	it("preserves deterministic mapping so tool_use and tool_result stay linked", () => {
+		const raw = "call_abc:xyz.1";
+		expect(normalizeToolCallId(raw)).toBe(normalizeToolCallId(raw));
+	});
+});
+
+describe("convertMessages tool id normalization", () => {
+	const model = {
+		id: "test-model",
+		name: "Test Model",
+		api: "vertex-claude-api",
+		provider: "google-vertex-claude",
+		reasoning: false,
+		input: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1000,
+		maxTokens: 100,
+	} as const;
+
+	it("normalizes tool_use.id on assistant toolCall blocks", () => {
+		const messages = [
+			{
+				role: "assistant",
+				content: [{ type: "toolCall", id: "call:abc.xyz", name: "read", arguments: {} }],
+			},
+		];
+		const [assistant] = convertMessages(messages as any, model as any);
+		expect(assistant.content[0].type).toBe("tool_use");
+		expect(assistant.content[0].id).toBe("call_abc_xyz");
+	});
+
+	it("normalizes tool_use_id on tool_result blocks, matching the paired tool_use", () => {
+		const messages = [
+			{
+				role: "assistant",
+				content: [{ type: "toolCall", id: "call:abc.xyz", name: "read", arguments: {} }],
+			},
+			{
+				role: "toolResult",
+				toolCallId: "call:abc.xyz",
+				content: [{ type: "text", text: "ok" }],
+				isError: false,
+			},
+			{
+				role: "toolResult",
+				toolCallId: "call:second!one",
+				content: [{ type: "text", text: "ok2" }],
+				isError: false,
+			},
+		];
+		const params = convertMessages(messages as any, model as any);
+		const assistant = params[0];
+		const userWithResults = params[1];
+		expect(assistant.content[0].id).toBe("call_abc_xyz");
+		expect(userWithResults.content[0].tool_use_id).toBe("call_abc_xyz");
+		expect(userWithResults.content[1].tool_use_id).toBe("call_second_one");
 	});
 });
 

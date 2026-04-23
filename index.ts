@@ -198,6 +198,14 @@ function sanitizeSurrogates(text: string): string {
 	return text.replace(/[\uD800-\uDFFF]/g, "\uFFFD");
 }
 
+// Anthropic rejects tool_use / tool_use_id that doesn't match ^[a-zA-Z0-9_-]+
+// and caps the id at 64 chars. Upstream layers (pi-coding-agent, tool runners)
+// can hand us ids with colons or dots, so normalize before sending.
+export function normalizeToolCallId(id: string): string {
+	const sanitized = id.replace(/[^a-zA-Z0-9_-]/g, "_");
+	return sanitized.length > 64 ? sanitized.slice(0, 64) : sanitized;
+}
+
 function convertContentBlocks(
 	content: (TextContent | ImageContent)[],
 ): string | Array<{ type: "text"; text: string } | { type: "image"; source: { type: "base64"; media_type: string; data: string } }> {
@@ -278,7 +286,7 @@ export function convertMessages(messages: Message[], model: Model<Api>): any[] {
 				} else if (block.type === "toolCall") {
 					blocks.push({
 						type: "tool_use",
-						id: block.id,
+						id: normalizeToolCallId(block.id),
 						name: block.name,
 						input: block.arguments,
 					});
@@ -291,7 +299,7 @@ export function convertMessages(messages: Message[], model: Model<Api>): any[] {
 			const toolResults: any[] = [];
 			toolResults.push({
 				type: "tool_result",
-				tool_use_id: msg.toolCallId,
+				tool_use_id: normalizeToolCallId(msg.toolCallId),
 				content: convertContentBlocks(msg.content),
 				is_error: msg.isError,
 			});
@@ -302,7 +310,7 @@ export function convertMessages(messages: Message[], model: Model<Api>): any[] {
 				const nextMsg = messages[j] as ToolResultMessage;
 				toolResults.push({
 					type: "tool_result",
-					tool_use_id: nextMsg.toolCallId,
+					tool_use_id: normalizeToolCallId(nextMsg.toolCallId),
 					content: convertContentBlocks(nextMsg.content),
 					is_error: nextMsg.isError,
 				});
