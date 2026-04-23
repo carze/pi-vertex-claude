@@ -23,7 +23,11 @@
  */
 
 import { AnthropicVertex } from "@anthropic-ai/vertex-sdk";
-import type { ContentBlockParam, MessageCreateParamsStreaming } from "@anthropic-ai/sdk/resources/messages.js";
+import type {
+	ContentBlockParam,
+	MessageCreateParamsStreaming,
+	RawMessageStreamEvent,
+} from "@anthropic-ai/sdk/resources/messages.js";
 import {
 	type Api,
 	type AssistantMessage,
@@ -353,18 +357,254 @@ export function mapStopReason(reason: string): StopReason {
 	}
 }
 
+// =============================================================================
+// JSON repair + SSE parsing (ported from pi-mono e58d631)
+//
+// The Anthropic SDK stream iterator calls JSON.parse on raw SSE `data:`
+// payloads and hard-fails on malformed escapes or raw control characters
+// (e.g. a tool streaming `\H` or a literal tab). Owning the SSE loop and
+// running `parseJsonWithRepair` on each envelope rescues these payloads.
+// =============================================================================
+
+const VALID_JSON_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t", "u"]);
+
+function isControlCharacter(char: string): boolean {
+	const codePoint = char.codePointAt(0);
+	return codePoint !== undefined && codePoint >= 0x00 && codePoint <= 0x1f;
+}
+
+function escapeControlCharacter(char: string): string {
+	switch (char) {
+		case "\b":
+			return "\\b";
+		case "\f":
+			return "\\f";
+		case "\n":
+			return "\\n";
+		case "\r":
+			return "\\r";
+		case "\t":
+			return "\\t";
+		default:
+			return `\\u${char.codePointAt(0)?.toString(16).padStart(4, "0") ?? "0000"}`;
+	}
+}
+
+export function repairJson(json: string): string {
+	let repaired = "";
+	let inString = false;
+
+	for (let index = 0; index < json.length; index++) {
+		const char = json[index];
+
+		if (!inString) {
+			repaired += char;
+			if (char === '"') inString = true;
+			continue;
+		}
+
+		if (char === '"') {
+			repaired += char;
+			inString = false;
+			continue;
+		}
+
+		if (char === "\\") {
+			const nextChar = json[index + 1];
+			if (nextChar === undefined) {
+				repaired += "\\\\";
+				continue;
+			}
+
+			if (nextChar === "u") {
+				const unicodeDigits = json.slice(index + 2, index + 6);
+				if (/^[0-9a-fA-F]{4}$/.test(unicodeDigits)) {
+					repaired += `\\u${unicodeDigits}`;
+					index += 5;
+					continue;
+				}
+			}
+
+			if (VALID_JSON_ESCAPES.has(nextChar)) {
+				repaired += `\\${nextChar}`;
+				index += 1;
+				continue;
+			}
+
+			repaired += "\\\\";
+			continue;
+		}
+
+		repaired += isControlCharacter(char) ? escapeControlCharacter(char) : char;
+	}
+
+	return repaired;
+}
+
+export function parseJsonWithRepair<T>(json: string): T {
+	try {
+		return JSON.parse(json) as T;
+	} catch (error) {
+		const repairedJson = repairJson(json);
+		if (repairedJson !== json) {
+			return JSON.parse(repairedJson) as T;
+		}
+		throw error;
+	}
+}
+
 // Streaming JSON parser for tool arguments
-export function parseStreamingJson(partialJson: string): Record<string, any> {
+export function parseStreamingJson<T = Record<string, any>>(partialJson: string | undefined): T {
 	if (!partialJson || partialJson.trim() === "") {
-		return {};
+		return {} as T;
 	}
 	try {
-		return JSON.parse(partialJson);
+		return parseJsonWithRepair<T>(partialJson);
 	} catch {
 		try {
-			return partialParse(partialJson) ?? {};
+			const result = partialParse(partialJson);
+			return (result ?? {}) as T;
 		} catch {
-			return {};
+			try {
+				const result = partialParse(repairJson(partialJson));
+				return (result ?? {}) as T;
+			} catch {
+				return {} as T;
+			}
+		}
+	}
+}
+
+interface ServerSentEvent {
+	event: string | null;
+	data: string;
+	raw: string[];
+}
+
+interface SseDecoderState {
+	event: string | null;
+	data: string[];
+	raw: string[];
+}
+
+function flushSseEvent(state: SseDecoderState): ServerSentEvent | null {
+	if (!state.event && state.data.length === 0) return null;
+
+	const event: ServerSentEvent = {
+		event: state.event,
+		data: state.data.join("\n"),
+		raw: [...state.raw],
+	};
+	state.event = null;
+	state.data = [];
+	state.raw = [];
+	return event;
+}
+
+function decodeSseLine(line: string, state: SseDecoderState): ServerSentEvent | null {
+	if (line === "") return flushSseEvent(state);
+
+	state.raw.push(line);
+	if (line.startsWith(":")) return null;
+
+	const delimiterIndex = line.indexOf(":");
+	const fieldName = delimiterIndex === -1 ? line : line.slice(0, delimiterIndex);
+	let value = delimiterIndex === -1 ? "" : line.slice(delimiterIndex + 1);
+	if (value.startsWith(" ")) value = value.slice(1);
+
+	if (fieldName === "event") state.event = value;
+	else if (fieldName === "data") state.data.push(value);
+
+	return null;
+}
+
+function nextLineBreakIndex(text: string): number {
+	const carriageReturnIndex = text.indexOf("\r");
+	const newlineIndex = text.indexOf("\n");
+	if (carriageReturnIndex === -1) return newlineIndex;
+	if (newlineIndex === -1) return carriageReturnIndex;
+	return Math.min(carriageReturnIndex, newlineIndex);
+}
+
+function consumeLine(text: string): { line: string; rest: string } | null {
+	const lineBreakIndex = nextLineBreakIndex(text);
+	if (lineBreakIndex === -1) return null;
+
+	let nextIndex = lineBreakIndex + 1;
+	if (text[lineBreakIndex] === "\r" && text[nextIndex] === "\n") nextIndex += 1;
+
+	return {
+		line: text.slice(0, lineBreakIndex),
+		rest: text.slice(nextIndex),
+	};
+}
+
+export async function* iterateSseMessages(
+	body: ReadableStream<Uint8Array>,
+	signal?: AbortSignal,
+): AsyncGenerator<ServerSentEvent> {
+	const reader = body.getReader();
+	const decoder = new TextDecoder();
+	const state: SseDecoderState = { event: null, data: [], raw: [] };
+	let buffer = "";
+
+	try {
+		while (true) {
+			if (signal?.aborted) throw new Error("Request was aborted");
+
+			const { value, done } = await reader.read();
+			if (done) break;
+
+			buffer += decoder.decode(value, { stream: true });
+			let consumed = consumeLine(buffer);
+			while (consumed) {
+				buffer = consumed.rest;
+				const event = decodeSseLine(consumed.line, state);
+				if (event) yield event;
+				consumed = consumeLine(buffer);
+			}
+		}
+
+		buffer += decoder.decode();
+		let consumed = consumeLine(buffer);
+		while (consumed) {
+			buffer = consumed.rest;
+			const event = decodeSseLine(consumed.line, state);
+			if (event) yield event;
+			consumed = consumeLine(buffer);
+		}
+
+		if (buffer.length > 0) {
+			const event = decodeSseLine(buffer, state);
+			if (event) yield event;
+		}
+
+		const trailingEvent = flushSseEvent(state);
+		if (trailingEvent) yield trailingEvent;
+	} finally {
+		reader.releaseLock();
+	}
+}
+
+export async function* iterateAnthropicEvents(
+	response: Response,
+	signal?: AbortSignal,
+): AsyncGenerator<RawMessageStreamEvent> {
+	if (!response.body) {
+		throw new Error("Attempted to iterate over an Anthropic response with no body");
+	}
+
+	for await (const sse of iterateSseMessages(response.body, signal)) {
+		if (!sse.event || sse.event === "ping") continue;
+		if (sse.event === "error") throw new Error(sse.data);
+
+		try {
+			yield parseJsonWithRepair<RawMessageStreamEvent>(sse.data);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			throw new Error(
+				`Could not parse Anthropic SSE event ${sse.event}: ${message}; data=${sse.data}; raw=${sse.raw.join("\\n")}`,
+			);
 		}
 	}
 }
@@ -500,14 +740,17 @@ export function streamVertexClaude(
 				params.max_tokens = result.maxTokens;
 			}
 
-			// Start streaming
-			const anthropicStream = client.messages.stream({ ...params }, { signal: options?.signal });
+			// Start streaming. Own the SSE loop so malformed tool JSON or raw control
+			// characters in `partial_json` payloads can be repaired before parsing.
+			const response = await client.messages
+				.create({ ...params, stream: true }, { signal: options?.signal })
+				.asResponse();
 			stream.push({ type: "start", partial: output });
 
 			type Block = (ThinkingContent | TextContent | (ToolCall & { partialJson: string })) & { index: number };
 			const blocks = output.content as Block[];
 
-			for await (const event of anthropicStream) {
+			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
 				if (event.type === "message_start") {
 					output.usage.input = event.message.usage.input_tokens || 0;
 					output.usage.output = event.message.usage.output_tokens || 0;

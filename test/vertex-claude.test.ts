@@ -19,6 +19,10 @@ let convertMessages: typeof import("../index.js").convertMessages;
 let mapStopReason: typeof import("../index.js").mapStopReason;
 let parseStreamingJson: typeof import("../index.js").parseStreamingJson;
 let buildThinkingConfig: typeof import("../index.js").buildThinkingConfig;
+let repairJson: typeof import("../index.js").repairJson;
+let parseJsonWithRepair: typeof import("../index.js").parseJsonWithRepair;
+let iterateSseMessages: typeof import("../index.js").iterateSseMessages;
+let iterateAnthropicEvents: typeof import("../index.js").iterateAnthropicEvents;
 
 beforeAll(async () => {
 	const helpers = await import("../index.js");
@@ -26,6 +30,10 @@ beforeAll(async () => {
 	mapStopReason = helpers.mapStopReason;
 	parseStreamingJson = helpers.parseStreamingJson;
 	buildThinkingConfig = helpers.buildThinkingConfig;
+	repairJson = helpers.repairJson;
+	parseJsonWithRepair = helpers.parseJsonWithRepair;
+	iterateSseMessages = helpers.iterateSseMessages;
+	iterateAnthropicEvents = helpers.iterateAnthropicEvents;
 });
 
 describe("vertex-claude helpers", () => {
@@ -137,5 +145,175 @@ describe("vertex-claude helpers", () => {
 
 		expect(lastBlock.type).toBe("image");
 		expect(lastBlock.cache_control).toEqual({ type: "ephemeral" });
+	});
+});
+
+describe("repairJson", () => {
+	it("leaves valid JSON untouched", () => {
+		const input = '{"a":"b","c":1}';
+		expect(repairJson(input)).toBe(input);
+	});
+
+	it("escapes raw tab characters inside strings", () => {
+		const input = '{"text":"col1\tcol2"}';
+		const repaired = repairJson(input);
+		expect(JSON.parse(repaired)).toEqual({ text: "col1\tcol2" });
+	});
+
+	it("escapes raw newlines inside strings", () => {
+		const input = '{"text":"line1\nline2"}';
+		expect(JSON.parse(repairJson(input))).toEqual({ text: "line1\nline2" });
+	});
+
+	it("doubles backslash before invalid escape sequences like \\H", () => {
+		const input = String.raw`{"path":"A\H"}`;
+		const repaired = repairJson(input);
+		expect(JSON.parse(repaired)).toEqual({ path: String.raw`A\H` });
+	});
+
+	it("preserves valid 4-digit unicode escapes", () => {
+		const input = String.raw`{"text":"é"}`;
+		expect(repairJson(input)).toBe(input);
+		expect(JSON.parse(repairJson(input))).toEqual({ text: "é" });
+	});
+
+	it("does not corrupt valid 4-digit unicode escape sequences", () => {
+		const input = String.raw`{"text":"é"}`;
+		expect(repairJson(input)).toBe(input);
+		expect(JSON.parse(repairJson(input))).toEqual({ text: "é" });
+	});
+
+	it("handles trailing lone backslash at end of string", () => {
+		const input = '{"text":"hi\\';
+		const repaired = repairJson(input);
+		expect(repaired.endsWith("\\\\")).toBe(true);
+	});
+
+	it("leaves content outside strings untouched", () => {
+		const input = '{"a":1,"b":2}';
+		expect(repairJson(input)).toBe(input);
+	});
+});
+
+describe("parseJsonWithRepair", () => {
+	it("parses valid JSON without modification", () => {
+		expect(parseJsonWithRepair<{ a: number }>('{"a":1}')).toEqual({ a: 1 });
+	});
+
+	it("repairs and parses JSON containing raw tab", () => {
+		expect(parseJsonWithRepair<{ text: string }>('{"text":"a\tb"}')).toEqual({ text: "a\tb" });
+	});
+
+	it("repairs invalid \\H escape and parses", () => {
+		const input = String.raw`{"path":"A\H"}`;
+		expect(parseJsonWithRepair<{ path: string }>(input)).toEqual({ path: String.raw`A\H` });
+	});
+
+	it("throws when JSON is structurally unrecoverable", () => {
+		expect(() => parseJsonWithRepair<unknown>("{not-json")).toThrow();
+	});
+});
+
+describe("parseStreamingJson", () => {
+	it("repairs the pi-mono malformed tool JSON repro", () => {
+		const malformed = String.raw`{"path":"A\H","text":"col1\tcol2"}`;
+		expect(parseStreamingJson(malformed)).toEqual({
+			path: String.raw`A\H`,
+			text: "col1\tcol2",
+		});
+	});
+
+	it("tolerates partially streamed JSON and returns best-effort object", () => {
+		const partial = '{"path":"A","text":"col1\tcol';
+		const result = parseStreamingJson(partial);
+		expect(result).toMatchObject({ path: "A" });
+	});
+});
+
+function makeSseResponse(events: Array<{ event: string; data: string }>): Response {
+	const body = events.map(({ event, data }) => `event: ${event}\ndata: ${data}\n`).join("\n");
+	return new Response(body, {
+		status: 200,
+		headers: { "content-type": "text/event-stream" },
+	});
+}
+
+describe("iterateSseMessages", () => {
+	it("yields one event per SSE envelope", async () => {
+		const response = makeSseResponse([
+			{ event: "a", data: '{"x":1}' },
+			{ event: "b", data: '{"y":2}' },
+		]);
+		const events: Array<{ event: string | null; data: string }> = [];
+		for await (const ev of iterateSseMessages(response.body!)) {
+			events.push({ event: ev.event, data: ev.data });
+		}
+		expect(events).toEqual([
+			{ event: "a", data: '{"x":1}' },
+			{ event: "b", data: '{"y":2}' },
+		]);
+	});
+
+	it("aborts mid-stream when signal is aborted", async () => {
+		const controller = new AbortController();
+		const body = new ReadableStream<Uint8Array>({
+			start(controller2) {
+				controller2.enqueue(new TextEncoder().encode("event: a\ndata: 1\n\n"));
+			},
+		});
+		controller.abort();
+		await expect(async () => {
+			for await (const _ of iterateSseMessages(body, controller.signal)) {
+				// no-op
+			}
+		}).rejects.toThrow(/aborted/i);
+	});
+});
+
+describe("iterateAnthropicEvents", () => {
+	it("parses well-formed JSON envelopes", async () => {
+		const response = makeSseResponse([
+			{ event: "message_start", data: JSON.stringify({ type: "message_start" }) },
+			{ event: "message_stop", data: JSON.stringify({ type: "message_stop" }) },
+		]);
+		const types: string[] = [];
+		for await (const ev of iterateAnthropicEvents(response)) {
+			types.push((ev as any).type);
+		}
+		expect(types).toEqual(["message_start", "message_stop"]);
+	});
+
+	it("repairs malformed tool JSON deltas that SDK's default parser would reject", async () => {
+		// `\H` is an invalid JSON escape (SDK's JSON.parse hard-fails on this).
+		// `\t` is a valid JSON escape and resolves to a real tab character when parsed.
+		const malformedDelta = String.raw`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"A\H\",\"text\":\"col1\tcol2\"}"}}`;
+		const response = makeSseResponse([{ event: "content_block_delta", data: malformedDelta }]);
+		const events: any[] = [];
+		for await (const ev of iterateAnthropicEvents(response)) {
+			events.push(ev);
+		}
+		expect(events).toHaveLength(1);
+		expect(events[0].delta.partial_json).toBe('{"path":"A\\H","text":"col1\tcol2"}');
+	});
+
+	it("skips ping events", async () => {
+		const response = makeSseResponse([
+			{ event: "ping", data: "{}" },
+			{ event: "message_stop", data: JSON.stringify({ type: "message_stop" }) },
+		]);
+		const types: string[] = [];
+		for await (const ev of iterateAnthropicEvents(response)) {
+			types.push((ev as any).type);
+		}
+		expect(types).toEqual(["message_stop"]);
+	});
+
+	it("throws on SSE 'error' events", async () => {
+		const response = makeSseResponse([{ event: "error", data: "overloaded" }]);
+		await expect(async () => {
+			for await (const _ of iterateAnthropicEvents(response)) {
+				// no-op
+			}
+		}).rejects.toThrow(/overloaded/);
 	});
 });
