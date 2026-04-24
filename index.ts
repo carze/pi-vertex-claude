@@ -680,6 +680,13 @@ export type ThinkingConfig =
 
 export type ThinkingEffort = "low" | "medium" | "high" | "xhigh";
 
+// Opus 4.7+ rejects non-default sampling parameters (temperature/top_p/top_k)
+// with a 400 error. Matches oh-my-pi PR #728 hasOpus47ApiRestrictions and
+// needs to be stripped before the request is sent.
+export function hasOpus47ApiRestrictions(modelId: string): boolean {
+	return modelId.startsWith("claude-opus-4-7");
+}
+
 // Map pi-ai reasoning level to the Anthropic adaptive-thinking `effort` value.
 // Only Opus 4.7 supports "xhigh" on `output_config`; everything else caps at
 // "high". Older Opus 4.6 uses budget-based thinking in this provider, so its
@@ -821,6 +828,14 @@ export function streamVertexClaude(
 			// Add temperature if specified
 			if (options?.temperature !== undefined) {
 				params.temperature = options.temperature;
+			}
+
+			// Opus 4.7+ rejects non-default sampling parameters with a 400 error.
+			// Strip them unconditionally. Matches oh-my-pi PR #728.
+			if (hasOpus47ApiRestrictions(model.id)) {
+				delete params.temperature;
+				delete params.top_p;
+				delete params.top_k;
 			}
 
 			// Add tools if provided

@@ -27,6 +27,7 @@ let iterateAnthropicEvents: typeof import("../index.js").iterateAnthropicEvents;
 let normalizeToolCallId: typeof import("../index.js").normalizeToolCallId;
 let synthesizeMissingToolResults: typeof import("../index.js").synthesizeMissingToolResults;
 let mapReasoningToEffort: typeof import("../index.js").mapReasoningToEffort;
+let hasOpus47ApiRestrictions: typeof import("../index.js").hasOpus47ApiRestrictions;
 
 beforeAll(async () => {
 	const helpers = await import("../index.js");
@@ -42,6 +43,7 @@ beforeAll(async () => {
 	normalizeToolCallId = helpers.normalizeToolCallId;
 	synthesizeMissingToolResults = helpers.synthesizeMissingToolResults;
 	mapReasoningToEffort = helpers.mapReasoningToEffort;
+	hasOpus47ApiRestrictions = helpers.hasOpus47ApiRestrictions;
 });
 
 describe("vertex-claude helpers", () => {
@@ -118,6 +120,18 @@ describe("vertex-claude helpers", () => {
 		expect(mapReasoningToEffort("high", "claude-opus-4-7")).toBe("high");
 		expect(mapReasoningToEffort("xhigh", "claude-opus-4-7")).toBe("xhigh");
 		expect(mapReasoningToEffort("bogus", "claude-opus-4-7")).toBe("high");
+	});
+
+	it("flags Opus 4.7 (and variants) as having sampling-param restrictions", () => {
+		expect(hasOpus47ApiRestrictions("claude-opus-4-7")).toBe(true);
+		expect(hasOpus47ApiRestrictions("claude-opus-4-7@20260115")).toBe(true);
+	});
+
+	it("does not flag Opus 4.6 / Sonnet 4.6 / older models as restricted", () => {
+		expect(hasOpus47ApiRestrictions("claude-opus-4-6")).toBe(false);
+		expect(hasOpus47ApiRestrictions("claude-opus-4-6@20251101")).toBe(false);
+		expect(hasOpus47ApiRestrictions("claude-sonnet-4-6")).toBe(false);
+		expect(hasOpus47ApiRestrictions("claude-sonnet-4@20250514")).toBe(false);
 	});
 
 	it("returns extended thinking with budget and display=summarized for non-Opus-4.7 models", () => {
