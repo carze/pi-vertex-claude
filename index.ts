@@ -831,10 +831,10 @@ export function streamVertexClaude(
 			// Handle thinking/reasoning
 			if (options?.reasoning && model.reasoning) {
 				const result = buildThinkingConfig(model.id, options.reasoning, params.max_tokens, options.thinkingBudgets);
-				(params as any).thinking = result.thinking;
+				params.thinking = result.thinking;
 				params.max_tokens = result.maxTokens;
 				if (result.effort) {
-					(params as any).output_config = { effort: result.effort };
+					params.output_config = { effort: result.effort };
 				}
 			}
 
