@@ -1,3 +1,6 @@
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock(
@@ -28,6 +31,8 @@ let normalizeToolCallId: typeof import("../index.js").normalizeToolCallId;
 let synthesizeMissingToolResults: typeof import("../index.js").synthesizeMissingToolResults;
 let mapReasoningToEffort: typeof import("../index.js").mapReasoningToEffort;
 let hasOpus47ApiRestrictions: typeof import("../index.js").hasOpus47ApiRestrictions;
+let readSettingsEnv: typeof import("../index.js").readSettingsEnv;
+let resolveSettingsEnv: typeof import("../index.js").resolveSettingsEnv;
 
 beforeAll(async () => {
 	const helpers = await import("../index.js");
@@ -44,6 +49,8 @@ beforeAll(async () => {
 	synthesizeMissingToolResults = helpers.synthesizeMissingToolResults;
 	mapReasoningToEffort = helpers.mapReasoningToEffort;
 	hasOpus47ApiRestrictions = helpers.hasOpus47ApiRestrictions;
+	readSettingsEnv = helpers.readSettingsEnv;
+	resolveSettingsEnv = helpers.resolveSettingsEnv;
 });
 
 describe("vertex-claude helpers", () => {
@@ -599,5 +606,97 @@ describe("iterateAnthropicEvents", () => {
 				// no-op
 			}
 		}).rejects.toThrow(/overloaded/);
+	});
+});
+
+describe("settings.json env cascade", () => {
+	function writeSettings(dir: string, fileName: string, body: unknown): string {
+		const claudeDir = join(dir, ".claude");
+		mkdirSync(claudeDir, { recursive: true });
+		const filePath = join(claudeDir, fileName);
+		writeFileSync(filePath, JSON.stringify(body));
+		return filePath;
+	}
+
+	it("returns env subset from a valid settings file", () => {
+		const dir = mkdtempSync(join(tmpdir(), "pvc-settings-"));
+		const filePath = writeSettings(dir, "settings.json", {
+			env: {
+				ANTHROPIC_VERTEX_PROJECT_ID: "my-proj",
+				CLOUD_ML_REGION: "us-east5",
+			},
+			otherTopLevel: "ignored",
+		});
+		expect(readSettingsEnv(filePath)).toEqual({
+			ANTHROPIC_VERTEX_PROJECT_ID: "my-proj",
+			CLOUD_ML_REGION: "us-east5",
+		});
+	});
+
+	it("returns {} when the file does not exist", () => {
+		const missing = join(tmpdir(), "pvc-does-not-exist", "settings.json");
+		expect(readSettingsEnv(missing)).toEqual({});
+	});
+
+	it("returns {} on malformed JSON", () => {
+		const dir = mkdtempSync(join(tmpdir(), "pvc-settings-"));
+		mkdirSync(join(dir, ".claude"), { recursive: true });
+		const filePath = join(dir, ".claude", "settings.json");
+		writeFileSync(filePath, "{ this is not json");
+		expect(readSettingsEnv(filePath)).toEqual({});
+	});
+
+	it("filters out non-string env values", () => {
+		const dir = mkdtempSync(join(tmpdir(), "pvc-settings-"));
+		const filePath = writeSettings(dir, "settings.json", {
+			env: {
+				ANTHROPIC_VERTEX_PROJECT_ID: "my-proj",
+				NESTED: { a: 1 },
+				NUMERIC: 42,
+				BOOLEAN: true,
+			},
+		});
+		expect(readSettingsEnv(filePath)).toEqual({ ANTHROPIC_VERTEX_PROJECT_ID: "my-proj" });
+	});
+
+	it("returns {} when env field is missing", () => {
+		const dir = mkdtempSync(join(tmpdir(), "pvc-settings-"));
+		const filePath = writeSettings(dir, "settings.json", { description: "no env" });
+		expect(readSettingsEnv(filePath)).toEqual({});
+	});
+
+	it("merges global home settings with working-dir local settings (local wins)", () => {
+		const home = mkdtempSync(join(tmpdir(), "pvc-home-"));
+		const cwd = mkdtempSync(join(tmpdir(), "pvc-cwd-"));
+		writeSettings(home, "settings.json", {
+			env: {
+				ANTHROPIC_VERTEX_PROJECT_ID: "global-proj",
+				CLOUD_ML_REGION: "global-region",
+			},
+		});
+		writeSettings(cwd, "settings.local.json", {
+			env: {
+				ANTHROPIC_VERTEX_PROJECT_ID: "local-proj",
+			},
+		});
+		expect(resolveSettingsEnv(cwd, home)).toEqual({
+			ANTHROPIC_VERTEX_PROJECT_ID: "local-proj",
+			CLOUD_ML_REGION: "global-region",
+		});
+	});
+
+	it("returns global env only when no local settings exist", () => {
+		const home = mkdtempSync(join(tmpdir(), "pvc-home-"));
+		const cwd = mkdtempSync(join(tmpdir(), "pvc-cwd-"));
+		writeSettings(home, "settings.json", {
+			env: { ANTHROPIC_VERTEX_PROJECT_ID: "global-proj" },
+		});
+		expect(resolveSettingsEnv(cwd, home)).toEqual({ ANTHROPIC_VERTEX_PROJECT_ID: "global-proj" });
+	});
+
+	it("returns {} when neither file exists", () => {
+		const home = mkdtempSync(join(tmpdir(), "pvc-home-"));
+		const cwd = mkdtempSync(join(tmpdir(), "pvc-cwd-"));
+		expect(resolveSettingsEnv(cwd, home)).toEqual({});
 	});
 });

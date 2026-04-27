@@ -7,9 +7,15 @@
  * Prerequisites:
  *   1. Install dependencies: cd ~/.pi/agent/extensions/vertex-claude && npm install
  *   2. Authenticate with Google Cloud: gcloud auth application-default login
- *   3. Set environment variables:
- *      - GOOGLE_CLOUD_PROJECT or GCLOUD_PROJECT: Your GCP project ID
- *      - GOOGLE_CLOUD_LOCATION: Region (optional, defaults to us-east5)
+ *   3. Provide project ID and (optionally) region via any of:
+ *      a. Shell env vars (highest priority):
+ *         - GOOGLE_CLOUD_PROJECT or GCLOUD_PROJECT or ANTHROPIC_VERTEX_PROJECT_ID
+ *         - GOOGLE_CLOUD_LOCATION or CLOUD_ML_REGION (defaults to us-east5)
+ *      b. Working dir: <cwd>/.claude/settings.local.json under `env`
+ *      c. Global: ~/.claude/settings.json under `env`
+ *
+ *      Same field names as `npx claude-code-templates@latest --setting=api/vertex-configuration`,
+ *      so that template can drive this plugin without exporting env vars.
  *
  * Usage:
  *   pi --provider google-vertex-claude --model claude-sonnet-4@20250514
@@ -47,7 +53,7 @@ import {
 	type ToolResultMessage,
 } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parse as partialParse } from "partial-json";
@@ -172,26 +178,70 @@ const VERTEX_CLAUDE_MODELS = [
 // Helper Functions
 // =============================================================================
 
-type ProjectEnvVar = "GOOGLE_CLOUD_PROJECT" | "GCLOUD_PROJECT";
+type ProjectEnvVar = "GOOGLE_CLOUD_PROJECT" | "GCLOUD_PROJECT" | "ANTHROPIC_VERTEX_PROJECT_ID";
 
 const DEFAULT_ADC_PATH = join(homedir(), ".config", "gcloud", "application_default_credentials.json");
 let cachedAdcExists: boolean | null = null;
 
-function hasAdcCredentials(): boolean {
+export type SettingsEnv = Record<string, string>;
+
+// Read the `env` field of a Claude-style settings.json file. Returns an empty
+// object on missing file, malformed JSON, or non-string values. Used by
+// resolveSettingsEnv to layer on top of process.env.
+export function readSettingsEnv(filePath: string): SettingsEnv {
+	if (!existsSync(filePath)) return {};
+	try {
+		const raw = readFileSync(filePath, "utf-8");
+		const parsed = JSON.parse(raw) as { env?: unknown };
+		if (!parsed.env || typeof parsed.env !== "object") return {};
+		const result: SettingsEnv = {};
+		for (const [key, value] of Object.entries(parsed.env as Record<string, unknown>)) {
+			if (typeof value === "string") result[key] = value;
+		}
+		return result;
+	} catch {
+		return {};
+	}
+}
+
+// Cascade settings env: working-dir local overrides global home settings.
+// Layered under process.env in the resolvers so explicit shell exports always
+// win at runtime. Mirrors how `claude-code-templates --setting=api/vertex-configuration`
+// writes ANTHROPIC_VERTEX_PROJECT_ID / CLOUD_ML_REGION into a settings file.
+export function resolveSettingsEnv(cwd: string = process.cwd(), home: string = homedir()): SettingsEnv {
+	const globalEnv = readSettingsEnv(join(home, ".claude", "settings.json"));
+	const localEnv = readSettingsEnv(join(cwd, ".claude", "settings.local.json"));
+	return { ...globalEnv, ...localEnv };
+}
+
+function hasAdcCredentials(settingsEnv?: SettingsEnv): boolean {
 	if (cachedAdcExists !== null) return cachedAdcExists;
-	const adcPath = process.env.GOOGLE_APPLICATION_CREDENTIALS || DEFAULT_ADC_PATH;
+	const settings = settingsEnv ?? resolveSettingsEnv();
+	const adcPath =
+		process.env.GOOGLE_APPLICATION_CREDENTIALS || settings.GOOGLE_APPLICATION_CREDENTIALS || DEFAULT_ADC_PATH;
 	cachedAdcExists = existsSync(adcPath);
 	return cachedAdcExists;
 }
 
-function resolveProjectId(): { id: string; envVar: ProjectEnvVar } | undefined {
-	if (process.env.GOOGLE_CLOUD_PROJECT) {
-		return { id: process.env.GOOGLE_CLOUD_PROJECT, envVar: "GOOGLE_CLOUD_PROJECT" };
-	}
-	if (process.env.GCLOUD_PROJECT) {
-		return { id: process.env.GCLOUD_PROJECT, envVar: "GCLOUD_PROJECT" };
+function resolveProjectId(settingsEnv?: SettingsEnv): { id: string; envVar: ProjectEnvVar } | undefined {
+	const settings = settingsEnv ?? resolveSettingsEnv();
+	const candidates: ProjectEnvVar[] = ["GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "ANTHROPIC_VERTEX_PROJECT_ID"];
+	for (const name of candidates) {
+		const value = process.env[name] || settings[name];
+		if (value) return { id: value, envVar: name };
 	}
 	return undefined;
+}
+
+function resolveRegion(settingsEnv?: SettingsEnv): string {
+	const settings = settingsEnv ?? resolveSettingsEnv();
+	return (
+		process.env.GOOGLE_CLOUD_LOCATION ||
+		process.env.CLOUD_ML_REGION ||
+		settings.GOOGLE_CLOUD_LOCATION ||
+		settings.CLOUD_ML_REGION ||
+		"us-east5"
+	);
 }
 
 function sanitizeSurrogates(text: string): string {
@@ -776,18 +826,22 @@ export function streamVertexClaude(
 		};
 
 		try {
-			// Get project and region from environment
-			const projectInfo = resolveProjectId();
-			const region = process.env.GOOGLE_CLOUD_LOCATION || process.env.CLOUD_ML_REGION || "us-east5";
+			// Resolve config from process.env, then .claude/settings.local.json,
+			// then ~/.claude/settings.json. Lets `claude-code-templates --setting=api/vertex-configuration`
+			// drive the plugin without exporting env vars in the shell.
+			const settingsEnv = resolveSettingsEnv();
+			const projectInfo = resolveProjectId(settingsEnv);
+			const region = resolveRegion(settingsEnv);
 
 			if (!projectInfo) {
 				throw new Error(
-					"Vertex AI requires a project ID. Set GOOGLE_CLOUD_PROJECT or GCLOUD_PROJECT.\n" +
+					"Vertex AI requires a project ID. Set GOOGLE_CLOUD_PROJECT, GCLOUD_PROJECT, or ANTHROPIC_VERTEX_PROJECT_ID\n" +
+						"in your shell or in .claude/settings.local.json / ~/.claude/settings.json under env.\n" +
 						"Also ensure you've run: gcloud auth application-default login",
 				);
 			}
 
-			if (!hasAdcCredentials()) {
+			if (!hasAdcCredentials(settingsEnv)) {
 				throw new Error(
 					"Vertex AI requires Application Default Credentials. Run: gcloud auth application-default login\n" +
 						"or set GOOGLE_APPLICATION_CREDENTIALS to a service account key file.",
@@ -992,13 +1046,13 @@ export function streamVertexClaude(
 // =============================================================================
 
 export default function (pi: ExtensionAPI) {
-	const projectInfo = resolveProjectId();
-	if (!projectInfo || !hasAdcCredentials()) {
+	const settingsEnv = resolveSettingsEnv();
+	const projectInfo = resolveProjectId(settingsEnv);
+	if (!projectInfo || !hasAdcCredentials(settingsEnv)) {
 		return;
 	}
 
-	// Get region from environment for baseUrl (used for display, SDK handles actual endpoint)
-	const region = process.env.GOOGLE_CLOUD_LOCATION || process.env.CLOUD_ML_REGION || "us-east5";
+	const region = resolveRegion(settingsEnv);
 
 	pi.registerProvider("google-vertex-claude", {
 		baseUrl: `https://${region}-aiplatform.googleapis.com`, // Display URL, SDK handles actual endpoint
