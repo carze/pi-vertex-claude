@@ -1,6 +1,6 @@
 {
   "name": "@carze/pi-vertex-claude",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Google Vertex AI Claude provider for Pi coding agent",
   "keywords": [
     "pi-package",
