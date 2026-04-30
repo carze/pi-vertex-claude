@@ -1,0 +1,26 @@
+package.json
+  4bcd19d9940459a8 3
+CHANGELOG.md
+  4bcd19d9940459a8 8-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "d2c92c0d083da1a8a57ae653eed57ea955a1205e",
+  "prompts": {
+    "4bcd19d9940459a8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8df84cb7-69eb-417c-99d0-9c5d2c66312c",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Cesar Arze",
+      "messages": [],
+      "total_additions": 38,
+      "total_deletions": 1,
+      "accepted_lines": 38,
+      "overriden_lines": 0,
+      "messages_url": "https://usegitai.com/cas/2347744f819e0b801a25bf7ec93584c24b2ec4f005ec7fef560b634b0371292c"
+    }
+  }
+}
