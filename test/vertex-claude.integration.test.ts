@@ -26,15 +26,15 @@ describe.skipIf(!shouldRun)("Vertex Claude integration (ADC)", () => {
 
 	it("streams a response", async () => {
 		const model = {
-			id: "claude-3-5-haiku@20241022",
-			name: "Claude 3.5 Haiku (Vertex)",
+			id: "claude-haiku-4-5@20251001",
+			name: "Claude Haiku 4.5 (Vertex)",
 			api: "vertex-claude-api",
 			provider: "google-vertex-claude",
 			reasoning: false,
 			input: ["text"],
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow: 200000,
-			maxTokens: 8192,
+			maxTokens: 64000,
 		} as const;
 
 		const context = {

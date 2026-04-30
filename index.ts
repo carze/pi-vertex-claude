@@ -372,20 +372,35 @@ export function convertMessages(messages: Message[], model: Model<Api>): any[] {
 				}
 			}
 		} else if (msg.role === "assistant") {
+			// Anthropic verifies thinking signatures cryptographically. A signature
+			// from a different api/provider (e.g. user swapped to Kimi/OpenAI mid-
+			// conversation, then back to Vertex Claude) won't validate and triggers
+			// a 400 "Invalid signature in thinking block". Gate signature passthrough
+			// on api+provider match; for foreign turns, drop the signature and wrap
+			// the thinking content so Claude reads it as external context rather
+			// than its own private reasoning.
+			const sameProvider = msg.api === model.api && msg.provider === model.provider;
 			const blocks: ContentBlockParam[] = [];
 			for (const block of msg.content) {
 				if (block.type === "text" && block.text.trim()) {
 					blocks.push({ type: "text", text: sanitizeSurrogates(block.text) });
 				} else if (block.type === "thinking" && block.thinking.trim()) {
-					// If thinking signature is missing/empty, convert to plain text
-					if ((block as ThinkingContent).thinkingSignature?.trim()) {
+					const sig = (block as ThinkingContent).thinkingSignature?.trim();
+					if (sig && sameProvider) {
+						// Pass thinking unsanitized — sanitizeSurrogates would mutate
+						// the signed bytes and invalidate the signature.
 						blocks.push({
 							type: "thinking" as any,
-							thinking: sanitizeSurrogates(block.thinking),
-							signature: (block as ThinkingContent).thinkingSignature!,
+							thinking: block.thinking,
+							signature: sig,
 						});
-					} else {
+					} else if (sameProvider) {
 						blocks.push({ type: "text", text: sanitizeSurrogates(block.thinking) });
+					} else {
+						blocks.push({
+							type: "text",
+							text: `<external-reasoning>\n${sanitizeSurrogates(block.thinking)}\n</external-reasoning>`,
+						});
 					}
 				} else if (block.type === "toolCall") {
 					blocks.push({

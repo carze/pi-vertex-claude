@@ -439,6 +439,141 @@ describe("convertMessages orphan tool results", () => {
 	});
 });
 
+describe("convertMessages thinking block conversion", () => {
+	const vertexModel = {
+		id: "claude-opus-4-7",
+		name: "Claude Opus 4.7 (Vertex)",
+		api: "vertex-claude-api",
+		provider: "google-vertex-claude",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1000,
+		maxTokens: 100,
+	} as const;
+
+	it("preserves thinking signature when assistant came from same api+provider", () => {
+		const messages = [
+			{ role: "user", content: "hi", timestamp: 0 },
+			{
+				role: "assistant",
+				api: "vertex-claude-api",
+				provider: "google-vertex-claude",
+				model: "claude-opus-4-7",
+				content: [
+					{ type: "thinking", thinking: "reasoning here", thinkingSignature: "abc123" },
+					{ type: "text", text: "hello" },
+				],
+			},
+		];
+		const params = convertMessages(messages as any, vertexModel as any);
+		const assistant = params[1];
+		expect(assistant.role).toBe("assistant");
+		expect(assistant.content[0]).toEqual({
+			type: "thinking",
+			thinking: "reasoning here",
+			signature: "abc123",
+		});
+	});
+
+	it("does not sanitize thinking content when signature is preserved", () => {
+		// sanitizeSurrogates would mutate the signed payload and invalidate the signature
+		const loneHigh = "\uD83D"; // lone high surrogate; would normally be replaced with U+FFFD
+		const messages = [
+			{ role: "user", content: "hi", timestamp: 0 },
+			{
+				role: "assistant",
+				api: "vertex-claude-api",
+				provider: "google-vertex-claude",
+				model: "claude-opus-4-7",
+				content: [
+					{ type: "thinking", thinking: `text${loneHigh}more`, thinkingSignature: "abc123" },
+				],
+			},
+		];
+		const params = convertMessages(messages as any, vertexModel as any);
+		const assistant = params[1];
+		expect(assistant.content[0].thinking).toBe(`text${loneHigh}more`);
+		expect(assistant.content[0].thinking).not.toContain("�");
+	});
+
+	it("wraps thinking from a foreign provider in <external-reasoning> tags and drops the foreign signature", () => {
+		const messages = [
+			{ role: "user", content: "hi", timestamp: 0 },
+			{
+				role: "assistant",
+				api: "openai-completions",
+				provider: "kimi-coding",
+				model: "k2-turbo",
+				content: [
+					{ type: "thinking", thinking: "kimi's analysis", thinkingSignature: "kimi-sig" },
+					{ type: "text", text: "answer" },
+				],
+			},
+		];
+		const params = convertMessages(messages as any, vertexModel as any);
+		const assistant = params[1];
+		expect(assistant.content[0]).toEqual({
+			type: "text",
+			text: "<external-reasoning>\nkimi's analysis\n</external-reasoning>",
+		});
+		// Foreign signature must not leak through under any field name
+		expect(JSON.stringify(assistant.content)).not.toContain("kimi-sig");
+	});
+
+	it("wraps thinking when only the api differs (e.g. Anthropic Direct vs Vertex)", () => {
+		const messages = [
+			{ role: "user", content: "hi", timestamp: 0 },
+			{
+				role: "assistant",
+				api: "anthropic-messages",
+				provider: "anthropic",
+				model: "claude-opus-4-7",
+				content: [{ type: "thinking", thinking: "from direct API", thinkingSignature: "direct-sig" }],
+			},
+		];
+		const params = convertMessages(messages as any, vertexModel as any);
+		const assistant = params[1];
+		expect(assistant.content[0].type).toBe("text");
+		expect(assistant.content[0].text).toContain("<external-reasoning>");
+		expect(assistant.content[0].text).toContain("from direct API");
+		expect(JSON.stringify(assistant.content)).not.toContain("direct-sig");
+	});
+
+	it("converts same-provider thinking to plain text (unwrapped) when signature is missing", () => {
+		const messages = [
+			{ role: "user", content: "hi", timestamp: 0 },
+			{
+				role: "assistant",
+				api: "vertex-claude-api",
+				provider: "google-vertex-claude",
+				model: "claude-opus-4-7",
+				content: [{ type: "thinking", thinking: "no sig here" }],
+			},
+		];
+		const params = convertMessages(messages as any, vertexModel as any);
+		const assistant = params[1];
+		expect(assistant.content[0]).toEqual({ type: "text", text: "no sig here" });
+		expect(assistant.content[0].text).not.toContain("<external-reasoning>");
+	});
+
+	it("treats messages without api/provider metadata as foreign (defensive default)", () => {
+		const messages = [
+			{ role: "user", content: "hi", timestamp: 0 },
+			{
+				role: "assistant",
+				content: [{ type: "thinking", thinking: "orphan", thinkingSignature: "stale-sig" }],
+			},
+		];
+		const params = convertMessages(messages as any, vertexModel as any);
+		const assistant = params[1];
+		expect(assistant.content[0].type).toBe("text");
+		expect(assistant.content[0].text).toContain("<external-reasoning>");
+		expect(assistant.content[0].text).toContain("orphan");
+		expect(JSON.stringify(assistant.content)).not.toContain("stale-sig");
+	});
+});
+
 describe("repairJson", () => {
 	it("leaves valid JSON untouched", () => {
 		const input = '{"a":"b","c":1}';
