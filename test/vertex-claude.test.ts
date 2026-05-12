@@ -7,13 +7,13 @@ vi.mock(
 	"@mariozechner/pi-ai",
 	() => ({
 		calculateCost: () => undefined,
-		createAssistantMessageEventStream: () => ({
-			push: () => undefined,
-			end: () => undefined,
-			[Symbol.asyncIterator]: () => ({
-				next: async () => ({ done: true, value: undefined }),
-			}),
-		}),
+		AssistantMessageEventStream: class {
+			push() {}
+			end() {}
+			[Symbol.asyncIterator]() {
+				return { next: async () => ({ done: true, value: undefined }) };
+			}
+		},
 	}),
 	{ virtual: true },
 );

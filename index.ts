@@ -37,10 +37,9 @@ import type {
 import {
 	type Api,
 	type AssistantMessage,
-	type AssistantMessageEventStream,
+	AssistantMessageEventStream,
 	calculateCost,
 	type Context,
-	createAssistantMessageEventStream,
 	type ImageContent,
 	type Message,
 	type Model,
@@ -819,7 +818,7 @@ export function streamVertexClaude(
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
-	const stream = createAssistantMessageEventStream();
+	const stream = new AssistantMessageEventStream();
 
 	(async () => {
 		const output: AssistantMessage = {
