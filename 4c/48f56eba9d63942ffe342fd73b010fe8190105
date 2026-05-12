@@ -1,0 +1,28 @@
+test/vertex-claude.test.ts
+  s_4bcd19d9940459::t_020717dd7707d4 55
+  s_4bcd19d9940459::t_96909f180229b5 579-629
+  s_4bcd19d9940459::t_02aeb1afe54db8 36
+index.ts
+  s_4bcd19d9940459::t_8555ad39e7092e 905-909
+  s_4bcd19d9940459::t_7734e39c4d9212 250-269
+CHANGELOG.md
+  s_4bcd19d9940459::t_0a4c10aeee7fa9 8-12
+package.json
+  s_4bcd19d9940459::t_6b576ce472f208 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "4c48f56eba9d63942ffe342fd73b010fe8190105",
+  "prompts": {},
+  "sessions": {
+    "s_4bcd19d9940459": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8df84cb7-69eb-417c-99d0-9c5d2c66312c",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Cesar Arze <cesar.arze@gmail.com>"
+    }
+  }
+}
