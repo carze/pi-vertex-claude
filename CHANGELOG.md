@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9] - 2026-05-12
+
+### Fixed
+- `Error: text.replace is not a function` thrown from `streamVertexClaude` under oh-my-pi (omp) 14.9.8+. omp's fork changed `Context.systemPrompt` from `string` to `string[]`; the old code passed the array straight to `sanitizeSurrogates`, which calls `.replace()` on it. Extract `buildSystemBlocks` to accept either shape (plus `null`/`undefined`/non-string entries), sanitize each prompt, emit one Anthropic system text block per prompt, and attach `cache_control: ephemeral` to the LAST block only — Anthropic cache breakpoints are cumulative prefix cuts, so a single trailing breakpoint covers all preceding blocks without burning slots against the 4-breakpoint cap.
+
 ## [0.1.8] - 2026-05-12
 
 ### Fixed
