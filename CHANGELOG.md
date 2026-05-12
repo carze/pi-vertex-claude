@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-05-12
+
+### Fixed
+- Plugin failed to load under oh-my-pi (omp) 14.9.8+: `Export named 'createAssistantMessageEventStream' not found in module '@oh-my-pi/pi-ai'`. The forked `@oh-my-pi/pi-ai` package silently dropped the factory function; instantiate the `AssistantMessageEventStream` class directly with `new` instead. omp's package-name compat shim still handles the `@mariozechner/pi-ai` → `@oh-my-pi/pi-ai` rewrite, so no other import changes are needed.
+
 ## [0.1.7] - 2026-04-30
 
 ### Fixed
