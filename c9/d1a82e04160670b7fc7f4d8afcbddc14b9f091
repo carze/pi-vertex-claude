@@ -1,0 +1,21 @@
+CHANGELOG.md
+  s_7009008bbe01ce::t_0aa69a3597697e 8-12
+package.json
+  s_7009008bbe01ce::t_c09e3c2cc74249 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "c9d1a82e04160670b7fc7f4d8afcbddc14b9f091",
+  "prompts": {},
+  "sessions": {
+    "s_7009008bbe01ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dde41c2b-155c-40cb-b6b4-2aa9ed211144",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Cesar Arze <cesar.arze@gmail.com>"
+    }
+  }
+}
