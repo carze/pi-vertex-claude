@@ -115,6 +115,17 @@ describe("vertex-claude helpers", () => {
 		expect(result.effort).toBe("xhigh");
 	});
 
+	it("returns adaptive thinking with display=summarized and effort for Opus 4.8", () => {
+		const result = buildThinkingConfig("claude-opus-4-8", "high", 16000);
+		expect(result.thinking).toEqual({ type: "adaptive", display: "summarized" });
+		expect(result.effort).toBe("high");
+		expect(result.maxTokens).toBe(16000);
+	});
+
+	it("maps xhigh reasoning to effort=xhigh on Opus 4.8", () => {
+		expect(mapReasoningToEffort("xhigh", "claude-opus-4-8")).toBe("xhigh");
+	});
+
 	it("maps xhigh reasoning to effort=high on non-4.7 models (defensive)", () => {
 		// Not currently reachable through this code path (only Opus 4.7 goes
 		// adaptive here) but guards mapReasoningToEffort contract.
@@ -134,6 +145,8 @@ describe("vertex-claude helpers", () => {
 	it("flags Opus 4.7 (and variants) as having sampling-param restrictions", () => {
 		expect(hasOpus47ApiRestrictions("claude-opus-4-7")).toBe(true);
 		expect(hasOpus47ApiRestrictions("claude-opus-4-7@20260115")).toBe(true);
+		expect(hasOpus47ApiRestrictions("claude-opus-4-8")).toBe(true);
+		expect(hasOpus47ApiRestrictions("claude-opus-4-8@20260528")).toBe(true);
 	});
 
 	it("does not flag Opus 4.6 / Sonnet 4.6 / older models as restricted", () => {

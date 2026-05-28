@@ -64,6 +64,15 @@ import { parse as partialParse } from "partial-json";
 
 const VERTEX_CLAUDE_MODELS = [
 	{
+		id: "claude-opus-4-8",
+		name: "Claude Opus 4.8 (Vertex)",
+		reasoning: true,
+		input: ["text", "image"] as ("text" | "image")[],
+		cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+		contextWindow: 1000000,
+		maxTokens: 128000,
+	},
+	{
 		id: "claude-opus-4-7",
 		name: "Claude Opus 4.7 (Vertex)",
 		reasoning: true,
@@ -764,11 +773,18 @@ export type ThinkingConfig =
 
 export type ThinkingEffort = "low" | "medium" | "high" | "xhigh";
 
+// Opus 4.7 introduced behaviors that every later Opus minor inherits: adaptive
+// thinking, "xhigh" reasoning effort, and rejection of non-default sampling
+// parameters. Centralize the version check so the three call sites stay in sync.
+function isOpus47Plus(modelId: string): boolean {
+	return modelId.startsWith("claude-opus-4-7") || modelId.startsWith("claude-opus-4-8");
+}
+
 // Opus 4.7+ rejects non-default sampling parameters (temperature/top_p/top_k)
 // with a 400 error. Matches oh-my-pi PR #728 hasOpus47ApiRestrictions and
 // needs to be stripped before the request is sent.
 export function hasOpus47ApiRestrictions(modelId: string): boolean {
-	return modelId.startsWith("claude-opus-4-7");
+	return isOpus47Plus(modelId);
 }
 
 // Map pi-ai reasoning level to the Anthropic adaptive-thinking `effort` value.
@@ -785,7 +801,7 @@ export function mapReasoningToEffort(reasoning: string, modelId: string): Thinki
 		case "high":
 			return "high";
 		case "xhigh":
-			return modelId.includes("opus-4-7") ? "xhigh" : "high";
+			return isOpus47Plus(modelId) ? "xhigh" : "high";
 		default:
 			return "high";
 	}
@@ -801,7 +817,7 @@ export function buildThinkingConfig(
 	// `display` to "omitted", which strips thinking text from the stream and
 	// corrupts tool_use partial_json delivery (TodoWrite "JSON parse error").
 	// Pin display to "summarized" per pi-mono acbf8eca.
-	if (modelId.startsWith("claude-opus-4-7")) {
+	if (isOpus47Plus(modelId)) {
 		return {
 			thinking: { type: "adaptive", display: "summarized" },
 			maxTokens,

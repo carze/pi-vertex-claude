@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.10] - 2026-05-28
+
+### Added
+- Claude Opus 4.8 (`claude-opus-4-8`), 1M context / 128K output. Inherits the Opus 4.7 behaviors — adaptive thinking with `display: "summarized"`, `xhigh` reasoning effort, and stripping of non-default sampling params (`temperature`/`top_p`/`top_k`). The three 4.7 version checks are consolidated into one `isOpus47Plus` helper so future Opus minors stay in sync.
+
 ## [0.1.9] - 2026-05-12
 
 ### Fixed
