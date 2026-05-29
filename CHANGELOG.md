@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.11] - 2026-05-28
+
+### Added
+- Opus 4.7/4.8 now expose the full thinking-effort range and can reach Anthropic's no-constraints `max` effort. Two changes were needed because pi-ai's effort model doesn't line up with Anthropic's:
+  - Declared explicit `thinking: { minLevel: "minimal", maxLevel: "xhigh" }` metadata on the Opus 4.7/4.8 entries. pi-ai only *infers* xhigh for its built-in `anthropic-messages` API, so our custom `vertex-claude-api` would otherwise have the top effort level clamped away before the request reached this provider.
+  - **Shortcut (pi-ai design):** pi-ai's picker exposes `minimal/low/medium/high/xhigh`, but Anthropic's adaptive scale is `low/medium/high/xhigh/max` (no `minimal`). The two 5-level scales don't line up and pi-ai can't add a 6th slot, so `mapReasoningToEffort` shifts every level up one tier for Opus 4.7+ — `minimal→low, low→medium, medium→high, high→xhigh, xhigh→max` — letting the picker's top slot reach `max`.
+
 ## [0.1.10] - 2026-05-28
 
 ### Added

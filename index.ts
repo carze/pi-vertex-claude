@@ -71,6 +71,12 @@ const VERTEX_CLAUDE_MODELS = [
 		cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
 		contextWindow: 1000000,
 		maxTokens: 128000,
+		// Declare the effort range explicitly so omp's picker exposes the full
+		// minimal..xhigh set. pi-ai only infers xhigh for its built-in
+		// anthropic-messages API, so our custom vertex-claude-api would
+		// otherwise have the top level clamped away before reaching this
+		// provider. Values are pi-ai Effort strings (matched by value at runtime).
+		thinking: { minLevel: "minimal", maxLevel: "xhigh" },
 	},
 	{
 		id: "claude-opus-4-7",
@@ -80,6 +86,7 @@ const VERTEX_CLAUDE_MODELS = [
 		cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
 		contextWindow: 1000000,
 		maxTokens: 128000,
+		thinking: { minLevel: "minimal", maxLevel: "xhigh" },
 	},
 	{
 		id: "claude-opus-4-6",
@@ -771,7 +778,7 @@ export type ThinkingConfig =
 	| { type: "adaptive"; display: ThinkingDisplay }
 	| { type: "enabled"; budget_tokens: number; display: ThinkingDisplay };
 
-export type ThinkingEffort = "low" | "medium" | "high" | "xhigh";
+export type ThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 // Opus 4.7 introduced behaviors that every later Opus minor inherits: adaptive
 // thinking, "xhigh" reasoning effort, and rejection of non-default sampling
@@ -787,23 +794,32 @@ export function hasOpus47ApiRestrictions(modelId: string): boolean {
 	return isOpus47Plus(modelId);
 }
 
-// Map pi-ai reasoning level to the Anthropic adaptive-thinking `effort` value.
-// Only Opus 4.7 supports "xhigh" on `output_config`; everything else caps at
-// "high". Older Opus 4.6 uses budget-based thinking in this provider, so its
-// "max" mapping lives in pi-mono but not here.
+// Map a pi-ai reasoning level to the Anthropic adaptive-thinking `effort` value.
+//
+// SHORTCUT: pi-ai's picker exposes minimal/low/medium/high/xhigh, but Anthropic's
+// adaptive scale is low/medium/high/xhigh/max (no "minimal"). The two 5-level
+// scales don't line up, and pi-ai can't add a 6th slot. So for Opus 4.7+ we shift
+// every pi-ai level up one tier — minimal→low, low→medium, medium→high,
+// high→xhigh, xhigh→max — letting the picker's top slot reach Anthropic's
+// no-constraints "max" while still covering the full real effort range.
+// Non-adaptive models keep budget-based thinking and never reach this path.
 export function mapReasoningToEffort(reasoning: string, modelId: string): ThinkingEffort {
+	if (!isOpus47Plus(modelId)) {
+		return "high";
+	}
 	switch (reasoning) {
 		case "minimal":
-		case "low":
 			return "low";
-		case "medium":
+		case "low":
 			return "medium";
+		case "medium":
+			return "high";
 		case "high":
-			return "high";
+			return "xhigh";
 		case "xhigh":
-			return isOpus47Plus(modelId) ? "xhigh" : "high";
+			return "max";
 		default:
-			return "high";
+			return "xhigh";
 	}
 }
 
