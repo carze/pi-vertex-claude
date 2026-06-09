@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.12] - 2026-06-09
+
+### Added
+- Claude Fable 5 (`claude-fable-5`), 1M context / 128K output, text + image input. Anthropic's new model family for sustained autonomous coding/knowledge work (launched 2026-06-09). It shares the Opus 4.7+ runtime contract — always-on adaptive thinking with `display: "summarized"`, the `minimal..xhigh` effort range shifted up to Anthropic's `max` tier, and stripping of non-default sampling params (`temperature`/`top_p`/`top_k`) — so the `isOpus47Plus` helper was generalized to `usesAdaptiveThinking` and now covers Fable 5. Pricing: $10/$50 per MTok input/output, 90% prompt-cache read discount.
+
 ## [0.1.11] - 2026-05-28
 
 ### Added

@@ -64,6 +64,18 @@ import { parse as partialParse } from "partial-json";
 
 const VERTEX_CLAUDE_MODELS = [
 	{
+		id: "claude-fable-5",
+		name: "Claude Fable 5 (Vertex)",
+		reasoning: true,
+		input: ["text", "image"] as ("text" | "image")[],
+		cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+		contextWindow: 1000000,
+		maxTokens: 128000,
+		// Adaptive thinking is always on and effort is configurable, so expose the
+		// full minimal..xhigh range to omp's picker (see usesAdaptiveThinking).
+		thinking: { minLevel: "minimal", maxLevel: "xhigh" },
+	},
+	{
 		id: "claude-opus-4-8",
 		name: "Claude Opus 4.8 (Vertex)",
 		reasoning: true,
@@ -780,18 +792,23 @@ export type ThinkingConfig =
 
 export type ThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
-// Opus 4.7 introduced behaviors that every later Opus minor inherits: adaptive
-// thinking, "xhigh" reasoning effort, and rejection of non-default sampling
-// parameters. Centralize the version check so the three call sites stay in sync.
-function isOpus47Plus(modelId: string): boolean {
-	return modelId.startsWith("claude-opus-4-7") || modelId.startsWith("claude-opus-4-8");
+// Opus 4.7 introduced a behavior set that later models share: always-on adaptive
+// thinking, the "max" effort tier, and rejection of non-default sampling
+// parameters. Opus 4.8 and Claude Fable 5 inherit it. Centralize the check so
+// the three call sites stay in sync.
+function usesAdaptiveThinking(modelId: string): boolean {
+	return (
+		modelId.startsWith("claude-opus-4-7") ||
+		modelId.startsWith("claude-opus-4-8") ||
+		modelId.startsWith("claude-fable-5")
+	);
 }
 
-// Opus 4.7+ rejects non-default sampling parameters (temperature/top_p/top_k)
-// with a 400 error. Matches oh-my-pi PR #728 hasOpus47ApiRestrictions and
-// needs to be stripped before the request is sent.
+// These models reject non-default sampling parameters (temperature/top_p/top_k)
+// with a 400 error, so they must be stripped before the request is sent. Matches
+// oh-my-pi PR #728 hasOpus47ApiRestrictions; now also covers Claude Fable 5.
 export function hasOpus47ApiRestrictions(modelId: string): boolean {
-	return isOpus47Plus(modelId);
+	return usesAdaptiveThinking(modelId);
 }
 
 // Map a pi-ai reasoning level to the Anthropic adaptive-thinking `effort` value.
@@ -804,7 +821,7 @@ export function hasOpus47ApiRestrictions(modelId: string): boolean {
 // no-constraints "max" while still covering the full real effort range.
 // Non-adaptive models keep budget-based thinking and never reach this path.
 export function mapReasoningToEffort(reasoning: string, modelId: string): ThinkingEffort {
-	if (!isOpus47Plus(modelId)) {
+	if (!usesAdaptiveThinking(modelId)) {
 		return "high";
 	}
 	switch (reasoning) {
@@ -833,7 +850,7 @@ export function buildThinkingConfig(
 	// `display` to "omitted", which strips thinking text from the stream and
 	// corrupts tool_use partial_json delivery (TodoWrite "JSON parse error").
 	// Pin display to "summarized" per pi-mono acbf8eca.
-	if (isOpus47Plus(modelId)) {
+	if (usesAdaptiveThinking(modelId)) {
 		return {
 			thinking: { type: "adaptive", display: "summarized" },
 			maxTokens,

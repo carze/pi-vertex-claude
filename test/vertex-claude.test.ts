@@ -127,6 +127,17 @@ describe("vertex-claude helpers", () => {
 		expect(mapReasoningToEffort("xhigh", "claude-opus-4-8")).toBe("max");
 	});
 
+	it("returns adaptive thinking with display=summarized and shifted effort for Fable 5", () => {
+		const result = buildThinkingConfig("claude-fable-5", "high", 16000);
+		expect(result.thinking).toEqual({ type: "adaptive", display: "summarized" });
+		expect(result.effort).toBe("xhigh");
+		expect(result.maxTokens).toBe(16000);
+	});
+
+	it("maps top pi-ai level xhigh to wire effort=max on Fable 5", () => {
+		expect(mapReasoningToEffort("xhigh", "claude-fable-5")).toBe("max");
+	});
+
 	it("caps non-4.7 models at effort=high (defensive)", () => {
 		// Not currently reachable through this code path (only Opus 4.7+ goes
 		// adaptive here) but guards mapReasoningToEffort contract.
@@ -148,6 +159,8 @@ describe("vertex-claude helpers", () => {
 		expect(hasOpus47ApiRestrictions("claude-opus-4-7@20260115")).toBe(true);
 		expect(hasOpus47ApiRestrictions("claude-opus-4-8")).toBe(true);
 		expect(hasOpus47ApiRestrictions("claude-opus-4-8@20260528")).toBe(true);
+		expect(hasOpus47ApiRestrictions("claude-fable-5")).toBe(true);
+		expect(hasOpus47ApiRestrictions("claude-fable-5@20260609")).toBe(true);
 	});
 
 	it("does not flag Opus 4.6 / Sonnet 4.6 / older models as restricted", () => {
