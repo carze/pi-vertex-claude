@@ -1,0 +1,28 @@
+index.ts
+  4bcd19d9940459a8 375-382,388-391,394-395,397,399-403
+test/vertex-claude.test.ts
+  4bcd19d9940459a8 442-576
+test/vertex-claude.integration.test.ts
+  4bcd19d9940459a8 29-30,37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "893ab54dab23b5f4bbf9ae2ec3665bcc4acaf721",
+  "prompts": {
+    "4bcd19d9940459a8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8df84cb7-69eb-417c-99d0-9c5d2c66312c",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Cesar Arze",
+      "messages": [],
+      "total_additions": 158,
+      "total_deletions": 8,
+      "accepted_lines": 158,
+      "overriden_lines": 0,
+      "messages_url": "https://usegitai.com/cas/0bcf9d29679e9885e3f38c24abd1b1331200bd63a71c50ec5d85f159712c36da"
+    }
+  }
+}

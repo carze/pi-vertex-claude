@@ -1,0 +1,26 @@
+README.md
+  9d04b8e41ea28715 46-48
+index.ts
+  9d04b8e41ea28715 58-65,72-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "2ed21fd54e21aa9143c0ec5b52554781535c47cc",
+  "prompts": {
+    "9d04b8e41ea28715": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa3e6ca9-6739-493b-92eb-84001ac4caba",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Cesar Arze",
+      "messages": [],
+      "total_additions": 27,
+      "total_deletions": 6,
+      "accepted_lines": 25,
+      "overriden_lines": 0,
+      "messages_url": "https://usegitai.com/cas/cb79dd5390b3c711dd1c6f7a6442026c178b3e29f1d39aea7d41058191f3fd6f"
+    }
+  }
+}
