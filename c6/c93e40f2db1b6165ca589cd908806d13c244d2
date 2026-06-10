@@ -1,0 +1,29 @@
+index.ts
+  s_6c05d41a70e77e::t_4773cd59193d79 1172,1181-1202
+  s_6c05d41a70e77e::t_0d6be5061b515d 1145-1146
+  s_6c05d41a70e77e::t_42ca37d1021b37 970-975
+  s_6c05d41a70e77e::t_80664e7cca0104 1059
+  s_6c05d41a70e77e::t_48bfc091910cb7 535-593
+test/vertex-claude.test.ts
+  s_6c05d41a70e77e::t_03e625dce47642 59-61
+  s_6c05d41a70e77e::t_363821f38bc823 37-39
+  s_6c05d41a70e77e::t_c2f9c8dc0cef21 4
+  s_6c05d41a70e77e::t_95d712629613db 80-105,119-122,124-164
+  s_6c05d41a70e77e::t_98ae6a435a5555 106-118,123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "c6c93e40f2db1b6165ca589cd908806d13c244d2",
+  "prompts": {},
+  "sessions": {
+    "s_6c05d41a70e77e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "367a70ad-e1bb-4861-93f7-b5332591cd64",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Cesar Arze <cesar.arze@gmail.com>"
+    }
+  }
+}
