@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock(
 	"@mariozechner/pi-ai",
@@ -34,6 +34,9 @@ let hasOpus47ApiRestrictions: typeof import("../index.js").hasOpus47ApiRestricti
 let readSettingsEnv: typeof import("../index.js").readSettingsEnv;
 let resolveSettingsEnv: typeof import("../index.js").resolveSettingsEnv;
 let buildSystemBlocks: typeof import("../index.js").buildSystemBlocks;
+let describeStopReasonError: typeof import("../index.js").describeStopReasonError;
+let extractErrorDetail: typeof import("../index.js").extractErrorDetail;
+let isDebugEnabled: typeof import("../index.js").isDebugEnabled;
 
 beforeAll(async () => {
 	const helpers = await import("../index.js");
@@ -53,6 +56,9 @@ beforeAll(async () => {
 	readSettingsEnv = helpers.readSettingsEnv;
 	resolveSettingsEnv = helpers.resolveSettingsEnv;
 	buildSystemBlocks = helpers.buildSystemBlocks;
+	describeStopReasonError = helpers.describeStopReasonError;
+	extractErrorDetail = helpers.extractErrorDetail;
+	isDebugEnabled = helpers.isDebugEnabled;
 });
 
 describe("vertex-claude helpers", () => {
@@ -69,6 +75,91 @@ describe("vertex-claude helpers", () => {
 		expect(mapStopReason("end_turn")).toBe("stop");
 		expect(mapStopReason("tool_use")).toBe("toolUse");
 		expect(() => mapStopReason("unknown")).toThrow(/Unhandled stop reason/);
+	});
+
+	describe("describeStopReasonError", () => {
+		it("explains a refusal instead of the bare 'unknown error' message", () => {
+			const msg = describeStopReasonError("refusal");
+			expect(msg).toMatch(/refusal/);
+			expect(msg).toMatch(/declined/);
+			expect(msg).not.toMatch(/An unknown error occurred/);
+		});
+
+		it("includes the request id when available", () => {
+			expect(describeStopReasonError("refusal", "req_abc123")).toContain("request-id: req_abc123");
+		});
+
+		it("reports an unexpected raw stop reason verbatim", () => {
+			expect(describeStopReasonError("model_context_window_exceeded")).toContain(
+				'"model_context_window_exceeded"',
+			);
+		});
+
+		it("handles a missing stop reason", () => {
+			expect(describeStopReasonError(undefined)).toMatch(/no stop_reason/);
+		});
+	});
+
+	describe("extractErrorDetail", () => {
+		it("appends request id and type from an Anthropic APIError-shaped object", () => {
+			const detail = extractErrorDetail({
+				message: "429 Rate limit exceeded",
+				status: 429,
+				requestID: "req_xyz",
+				type: "rate_limit_error",
+			});
+			expect(detail).toContain("429");
+			expect(detail).toContain("request-id: req_xyz");
+			expect(detail).toContain("type: rate_limit_error");
+		});
+
+		it("does not duplicate a type already present in the message body", () => {
+			const detail = extractErrorDetail({
+				message: '529 {"type":"overloaded_error"}',
+				status: 529,
+				requestID: "req_xyz",
+				type: "overloaded_error",
+			});
+			expect(detail.match(/overloaded_error/g)).toHaveLength(1);
+			expect(detail).toContain("request-id: req_xyz");
+		});
+
+		it("does not duplicate a request id already present in the message", () => {
+			const detail = extractErrorDetail({ message: "boom req_dup", requestID: "req_dup" });
+			expect(detail.match(/req_dup/g)).toHaveLength(1);
+		});
+
+		it("falls back to the message for a plain Error", () => {
+			expect(extractErrorDetail(new Error("plain failure"))).toBe("plain failure");
+		});
+
+		it("stringifies a non-Error throw", () => {
+			expect(extractErrorDetail("just a string")).toBe('"just a string"');
+		});
+	});
+
+	describe("isDebugEnabled", () => {
+		const original = process.env.VERTEX_CLAUDE_DEBUG;
+		afterEach(() => {
+			if (original === undefined) delete process.env.VERTEX_CLAUDE_DEBUG;
+			else process.env.VERTEX_CLAUDE_DEBUG = original;
+		});
+
+		it("is off when unset or explicitly disabled", () => {
+			delete process.env.VERTEX_CLAUDE_DEBUG;
+			expect(isDebugEnabled()).toBe(false);
+			for (const v of ["", "0", "false", "FALSE"]) {
+				process.env.VERTEX_CLAUDE_DEBUG = v;
+				expect(isDebugEnabled()).toBe(false);
+			}
+		});
+
+		it("is on for any other truthy value", () => {
+			for (const v of ["1", "true", "yes"]) {
+				process.env.VERTEX_CLAUDE_DEBUG = v;
+				expect(isDebugEnabled()).toBe(true);
+			}
+		});
 	});
 
 	it("adds cache_control to last tool_result block", () => {

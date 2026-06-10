@@ -532,6 +532,65 @@ export function mapStopReason(reason: string): StopReason {
 	}
 }
 
+// Set VERTEX_CLAUDE_DEBUG (to anything other than "", "0", or "false") to dump a
+// structured error report to stderr whenever a stream fails. Off by default so
+// it never pollutes a normal TUI run.
+export function isDebugEnabled(): boolean {
+	const value = process.env.VERTEX_CLAUDE_DEBUG;
+	return value !== undefined && value !== "" && value !== "0" && value.toLowerCase() !== "false";
+}
+
+// The streaming loop maps Anthropic `stop_reason` values through mapStopReason;
+// only "refusal" maps to "error" (and "aborted" is never produced on the success
+// path). Upstream pi-ai throws a bare "An unknown error occurred" here, discarding
+// the real reason. Surface the actual stop_reason — and the request id, which is
+// what Anthropic support needs — so the failure is actionable.
+export function describeStopReasonError(rawStopReason: string | undefined, requestId?: string): string {
+	const idSuffix = requestId ? ` (request-id: ${requestId})` : "";
+	if (rawStopReason === "refusal") {
+		return (
+			'Claude ended the turn with stop_reason "refusal" — the model declined to continue. ' +
+			"This is usually a safety-classifier intervention rather than a server fault; " +
+			`retrying or rephrasing the request often clears it.${idSuffix}`
+		);
+	}
+	if (rawStopReason) {
+		return `Claude ended the turn with an error stop_reason "${rawStopReason}".${idSuffix}`;
+	}
+	return `The Vertex stream ended in an error state with no stop_reason reported.${idSuffix}`;
+}
+
+// Anthropic SDK errors (APIError and subclasses) carry status, request id, and an
+// error type that the bare `.message` omits. Pull those into the surfaced message
+// so transient 429/500/529s and the like are debuggable, falling back gracefully
+// for plain Errors and non-Error throws.
+export function extractErrorDetail(error: unknown): string {
+	if (error && typeof error === "object") {
+		const e = error as {
+			message?: unknown;
+			status?: unknown;
+			requestID?: unknown;
+			request_id?: unknown;
+			type?: unknown;
+		};
+		const base = typeof e.message === "string" && e.message.length > 0 ? e.message : undefined;
+		if (base) {
+			const parts = [base];
+			const requestId =
+				(typeof e.requestID === "string" && e.requestID) || (typeof e.request_id === "string" && e.request_id) || undefined;
+			if (requestId && !base.includes(requestId)) parts.push(`request-id: ${requestId}`);
+			if (typeof e.type === "string" && e.type && !base.includes(e.type)) parts.push(`type: ${e.type}`);
+			return parts.join(" | ");
+		}
+	}
+	if (error instanceof Error) return error.message;
+	try {
+		return JSON.stringify(error);
+	} catch {
+		return String(error);
+	}
+}
+
 // =============================================================================
 // JSON repair + SSE parsing (ported from pi-mono e58d631)
 //
@@ -908,6 +967,12 @@ export function streamVertexClaude(
 			timestamp: Date.now(),
 		};
 
+		// Declared outside the try so the catch can report them. requestId is the
+		// single most useful field for debugging a Vertex/Anthropic failure;
+		// rawStopReason preserves the wire value mapStopReason would otherwise flatten.
+		let requestId: string | undefined;
+		let rawStopReason: string | undefined;
+
 		try {
 			// Resolve config from process.env, then .claude/settings.local.json,
 			// then ~/.claude/settings.json. Lets `claude-code-templates --setting=api/vertex-configuration`
@@ -991,6 +1056,7 @@ export function streamVertexClaude(
 			const response = await client.messages
 				.create({ ...params, stream: true }, { signal: options?.signal })
 				.asResponse();
+			requestId = response.headers.get("request-id") ?? response.headers.get("x-request-id") ?? undefined;
 			stream.push({ type: "start", partial: output });
 
 			type Block = (ThinkingContent | TextContent | (ToolCall & { partialJson: string })) & { index: number };
@@ -1076,7 +1142,8 @@ export function streamVertexClaude(
 					}
 				} else if (event.type === "message_delta") {
 					if ((event.delta as any).stop_reason) {
-						output.stopReason = mapStopReason((event.delta as any).stop_reason);
+						rawStopReason = (event.delta as any).stop_reason;
+						output.stopReason = mapStopReason(rawStopReason as string);
 					}
 					// Update usage from message_delta
 					if ((event.usage as any).input_tokens != null) {
@@ -1102,7 +1169,7 @@ export function streamVertexClaude(
 			}
 
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
-				throw new Error("An unknown error occurred");
+				throw new Error(describeStopReasonError(rawStopReason, requestId));
 			}
 
 			stream.push({ type: "done", reason: output.stopReason as "stop" | "length" | "toolUse", message: output });
@@ -1111,7 +1178,28 @@ export function streamVertexClaude(
 			// Clean up any index properties
 			for (const block of output.content) delete (block as any).index;
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+			output.errorMessage = extractErrorDetail(error);
+
+			if (isDebugEnabled()) {
+				console.error(
+					"[vertex-claude] stream error",
+					JSON.stringify(
+						{
+							model: model.id,
+							provider: model.provider,
+							requestId,
+							rawStopReason,
+							stopReason: output.stopReason,
+							errorMessage: output.errorMessage,
+							status: (error as { status?: unknown })?.status,
+							stack: error instanceof Error ? error.stack : undefined,
+						},
+						null,
+						2,
+					),
+				);
+			}
+
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
