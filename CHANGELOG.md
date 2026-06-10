@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.13] - 2026-06-10
+
+### Changed
+- Vertex streams that ended in an error state surfaced a bare `An unknown error occurred`, discarding the actual cause and the request id. `mapStopReason` only maps `"refusal"` to `"error"` (and never produces `"aborted"`), so in practice this masked model refusals — usually a safety-classifier intervention rather than a server fault. `streamVertexClaude` now reports the real `stop_reason` and the Anthropic `request-id` (`describeStopReasonError`), and enriches caught SDK errors with `status`/`type`/`request-id` (`extractErrorDetail`) instead of just `.message`. HTTP errors (429/500/529) already carried meaningful messages and are unchanged apart from the appended request id.
+
+### Added
+- Opt-in `VERTEX_CLAUDE_DEBUG` env var. When set (to anything other than `""`, `"0"`, or `"false"`), any stream failure dumps a structured report — model, provider, request id, raw stop reason, status, error message, and stack — to stderr. Off by default so normal TUI runs stay clean.
+
 ## [0.1.12] - 2026-06-09
 
 ### Added
